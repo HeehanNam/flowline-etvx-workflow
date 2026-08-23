@@ -45,6 +45,9 @@ GitHub Pages 배포본은 정적 호스팅 환경에서 실행되며 데이터�
 - 실행 중인 Workflow 스냅샷의 Task·ETVX·연결·Subtask·체크리스트 추가/수정/삭제
 - 실행 중 구조 변경 시 기존 완료·체크 상태 보존 및 실행 이력 기록
 - Task 편집 도중 Subtask/체크 항목을 변경해도 작성 중인 폼 내용 보존
+- 실행 중 보완된 절차를 독립적인 Workflow 모범 사례 템플릿으로 저장
+- Workflow별 `.flowline.json` Export/Import
+- Task 상태, ETVX, 체크리스트와 최근 이력이 포함된 자체 포함 HTML 리포트 다운로드
 - 수행 중·완료 Task의 체크리스트와 Subtask 일괄 Reset
 - 현재 Task만 또는 연결된 모든 후속 Task Reset 범위 선택
 - Reset 확인 팝업과 실행 이력 기록

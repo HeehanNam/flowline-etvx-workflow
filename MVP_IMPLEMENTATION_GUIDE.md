@@ -42,6 +42,9 @@
 - 실행 중 식별된 절차를 현재 실행 스냅샷에 추가·수정·삭제
 - 실행 중 구조 편집 시 기존 Runtime 상태와 체크 결과를 항목 ID 기준으로 보존
 - Task 폼의 동적 Subtask·체크리스트 편집 시 미저장 입력값 보존
+- 실행 스냅샷을 새 ID로 복제하여 모범 사례 Workflow 템플릿으로 저장
+- 버전이 포함된 Workflow JSON Export/Import와 충돌 방지 ID 재생성
+- 실행 현황을 별도 프로그램 없이 열고 인쇄할 수 있는 HTML 리포트로 다운로드
 - Flask JSON API와 SQLite 영속화
 - Task 자유 좌표 배치 및 SVG 연결선
 - 입력·출력 포트 기반 연결선 드래그 앤 드롭
