@@ -14,6 +14,8 @@ python app.py
 
 ## 원격 데모
 
+[Flowline 원격 데모 열기](https://heehannam.github.io/flowline-etvx-workflow/)
+
 GitHub Pages 배포본은 정적 호스팅 환경에서 실행되며 데이터는 각 브라우저의 LocalStorage에 저장됩니다. 로컬에서 Flask로 실행할 때는 기존과 같이 SQLite를 사용합니다.
 
 `main` 브랜치에 Push하면 `.github/workflows/deploy-pages.yml`이 자동으로 정적 데모를 배포합니다.
