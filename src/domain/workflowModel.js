@@ -4,9 +4,9 @@ export function createWorkflow(input = {}) {
   const now = new Date().toISOString();
   return {
     id: createId("wf"),
-    name: input.name?.trim() || "새 Workflow",
-    description: input.description?.trim() || "",
-    owner: input.owner?.trim() || "",
+    name: input.name && input.name.trim() || "새 Workflow",
+    description: input.description && input.description.trim() || "",
+    owner: input.owner && input.owner.trim() || "",
     version: 1,
     createdAt: now,
     updatedAt: now,
@@ -17,11 +17,11 @@ export function createWorkflow(input = {}) {
 export function createTask(input = {}) {
   return {
     id: createId("task"),
-    title: input.title?.trim() || "새 업무",
-    assignee: input.assignee?.trim() || "미지정",
-    entry: input.entry?.trim() || "선행 업무 완료",
-    instructions: input.instructions?.trim() || "",
-    exit: input.exit?.trim() || "필수 체크리스트 완료",
+    title: input.title && input.title.trim() || "새 업무",
+    assignee: input.assignee && input.assignee.trim() || "미지정",
+    entry: input.entry && input.entry.trim() || "선행 업무 완료",
+    instructions: input.instructions && input.instructions.trim() || "",
+    exit: input.exit && input.exit.trim() || "필수 체크리스트 완료",
     priority: input.priority || "medium",
     dependencies: input.dependencies || [],
     position: input.position || null,
@@ -49,8 +49,8 @@ export function normalizeState(state) {
     };
     workflow.tasks.forEach(levelOf);
     workflow.tasks.forEach((task, index) => {
-    task.priority ||= "medium";
-    task.subtasks ||= [];
+    if (!task.priority) task.priority = "medium";
+    if (!task.subtasks) task.subtasks = [];
     if (!Array.isArray(task.dependencies)) task.dependencies = index ? [workflow.tasks[index - 1].id] : [];
     if (!task.position) {
       const level = levels.get(task.id) || 0;
@@ -60,14 +60,14 @@ export function normalizeState(state) {
   });});
   state.instances.forEach(instance => {
     instance.definitionSnapshot.tasks.forEach((task, index) => {
-      task.priority ||= "medium";
-      task.subtasks ||= [];
-      task.position ||= { x: 80 + index * 320, y: 90 };
+      if (!task.priority) task.priority = "medium";
+      if (!task.subtasks) task.subtasks = [];
+      if (!task.position) task.position = { x: 80 + index * 320, y: 90 };
       if (!Array.isArray(task.dependencies)) task.dependencies = index ? [instance.definitionSnapshot.tasks[index - 1].id] : [];
     });
     instance.tasks.forEach(runTask => {
       const definition = instance.definitionSnapshot.tasks.find(task => task.id === runTask.taskId);
-      runTask.subtasks ||= definition.subtasks.map(item => ({ itemId: item.id, completed: false }));
+      if (!runTask.subtasks) runTask.subtasks = definition.subtasks.map(item => ({ itemId: item.id, completed: false }));
     });
   });
   return state;
@@ -75,10 +75,10 @@ export function normalizeState(state) {
 
 export function validateWorkflow(workflow) {
   const errors = [];
-  if (!workflow.name?.trim()) errors.push("Workflow 이름이 필요합니다.");
+  if (!workflow.name || !workflow.name.trim()) errors.push("Workflow 이름이 필요합니다.");
   if (!workflow.tasks.length) errors.push("최소 한 개의 Task가 필요합니다.");
   workflow.tasks.forEach((task, index) => {
-    if (!task.title?.trim()) errors.push(`${index + 1}번 Task 이름이 필요합니다.`);
+    if (!task.title || !task.title.trim()) errors.push(`${index + 1}번 Task 이름이 필요합니다.`);
     if (!task.checklist.length) errors.push(`${task.title}에 체크리스트가 필요합니다.`);
   });
   const ids = new Set(workflow.tasks.map(task => task.id));
@@ -91,7 +91,7 @@ export function validateWorkflow(workflow) {
     if (visited.has(id)) return false;
     visiting.add(id);
     const task = workflow.tasks.find(item => item.id === id);
-    if (task?.dependencies.some(visit)) return true;
+    if (task && task.dependencies.some(visit)) return true;
     visiting.delete(id); visited.add(id); return false;
   }
   if (workflow.tasks.some(task => visit(task.id))) errors.push("Task 연결에 순환 관계가 있습니다. 선행 관계를 확인해 주세요.");

@@ -12,6 +12,16 @@ python app.py
 
 브라우저에서 [http://localhost:5050](http://localhost:5050)을 엽니다.
 
+`index.html`을 직접 더블클릭하지 말고 반드시 Flask 주소로 접속해야 합니다. 인터넷이 차단된 사내망에서도 외부 CDN 없이 동작합니다.
+
+## 사내망 브라우저 호환성
+
+- Chromium 기반 Microsoft Edge 및 Chrome 80 이상을 권장합니다.
+- `structuredClone`, `Array.at`, `replaceAll`을 지원하지 않는 브라우저를 위한 내장 호환 레이어가 포함되어 있습니다.
+- 초기 화면 구성에서 최신 브라우저 전용 `top-level await`을 사용하지 않습니다.
+- 시작 오류가 발생하면 빈 화면 대신 오류 내용과 `/api/health` 확인 주소를 표시합니다.
+- IE 및 Edge의 IE 모드는 지원하지 않습니다.
+
 ## 원격 데모
 
 [Flowline 원격 데모 열기](https://heehannam.github.io/flowline-etvx-workflow/)

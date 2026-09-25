@@ -6,7 +6,8 @@ export class ApiRepository {
   async load() {
     try {
       const response = await fetch("/api/state");
-      if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error("API unavailable");
+      const contentType = response.headers.get("content-type") || "";
+      if (!response.ok || !contentType.includes("application/json")) throw new Error("API unavailable");
       const payload = await response.json();
       if (payload.state) return payload.state;
       const initial = this.loadLocal();

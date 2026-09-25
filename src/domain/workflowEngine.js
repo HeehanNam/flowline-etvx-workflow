@@ -6,7 +6,7 @@ export function startInstance(workflow, name) {
   const createdAt = now();
   return {
     id: createId("run"), workflowId: workflow.id, workflowVersion: workflow.version,
-    name: name?.trim() || `${workflow.name} 실행`, status: "active", createdAt,
+    name: name && name.trim() || `${workflow.name} 실행`, status: "active", createdAt,
     updatedAt: createdAt, completedAt: null, definitionSnapshot: structuredClone(workflow),
     tasks: workflow.tasks.map(task => ({ taskId: task.id, status: task.dependencies.length ? "blocked" : "ready", startedAt: null, completedAt: null, subtasks: task.subtasks.map(item => ({ itemId: item.id, completed: false })), checklist: task.checklist.map(item => ({ itemId: item.id, checked: false })) })),
     history: [event("instance_started", `“${workflow.name}” 실행을 시작했습니다.`)]
@@ -16,8 +16,8 @@ export const getTaskDefinition = (instance, taskId) => instance.definitionSnapsh
 export function requiredChecksComplete(instance, taskId) {
   const runTask = instance.tasks.find(t => t.taskId === taskId);
   const definition = getTaskDefinition(instance, taskId);
-  const checksDone = definition.checklist.filter(i => i.required).every(i => runTask.checklist.find(c => c.itemId === i.id)?.checked);
-  const subtasksDone = definition.subtasks.filter(i => i.required).every(i => runTask.subtasks.find(c => c.itemId === i.id)?.completed);
+  const checksDone = definition.checklist.filter(i => i.required).every(i => { const item = runTask.checklist.find(c => c.itemId === i.id); return item && item.checked; });
+  const subtasksDone = definition.subtasks.filter(i => i.required).every(i => { const item = runTask.subtasks.find(c => c.itemId === i.id); return item && item.completed; });
   return checksDone && subtasksDone;
 }
 export function startTask(instance, taskId) {
@@ -42,7 +42,7 @@ export function toggleSubtask(instance, taskId, itemId) {
 function unlockEligibleTasks(instance) {
   instance.tasks.filter(task => task.status === "blocked").forEach(runTask => {
     const definition = getTaskDefinition(instance, runTask.taskId);
-    const ready = definition.dependencies.every(id => instance.tasks.find(task => task.taskId === id)?.status === "completed");
+    const ready = definition.dependencies.every(id => { const task = instance.tasks.find(item => item.taskId === id); return task && task.status === "completed"; });
     if (ready) runTask.status = "ready";
   });
 }
@@ -50,7 +50,7 @@ export function completeTask(instance, taskId) {
   if (!requiredChecksComplete(instance, taskId)) throw new Error("필수 체크리스트를 모두 완료해 주세요.");
   const next = structuredClone(instance), index = next.tasks.findIndex(t => t.taskId === taskId), task = next.tasks[index];
   if (!task || !["ready", "in_progress"].includes(task.status)) throw new Error("현재 완료할 수 없는 Task입니다.");
-  task.status = "completed"; task.startedAt ||= now(); task.completedAt = now();
+  task.status = "completed"; if (!task.startedAt) task.startedAt = now(); task.completedAt = now();
   unlockEligibleTasks(next);
   if (next.tasks.every(item => item.status === "completed")) { next.status = "completed"; next.completedAt = now(); }
   next.updatedAt = now(); next.history.unshift(event("task_completed", `“${getTaskDefinition(next, taskId).title}” 업무를 완료했습니다.`)); return next;
@@ -84,7 +84,7 @@ export function resetTask(instance, taskId, scope = "task") {
   });
   next.tasks.filter(task => targetIds.has(task.taskId)).forEach(task => {
     const definition = getTaskDefinition(next, task.taskId);
-    task.status = definition.dependencies.every(id => next.tasks.find(item => item.taskId === id)?.status === "completed") ? "ready" : "blocked";
+    task.status = definition.dependencies.every(id => { const parent = next.tasks.find(item => item.taskId === id); return parent && parent.status === "completed"; }) ? "ready" : "blocked";
   });
   next.status = "active";
   next.completedAt = null;
@@ -110,7 +110,7 @@ export function reconcileInstanceStructure(instance, message = "실행 중 Workf
   next.tasks.forEach(task => {
     if (task.status === "completed") return;
     const definition = getTaskDefinition(next, task.taskId);
-    const eligible = definition.dependencies.every(id => next.tasks.find(item => item.taskId === id)?.status === "completed");
+    const eligible = definition.dependencies.every(id => { const parent = next.tasks.find(item => item.taskId === id); return parent && parent.status === "completed"; });
     if (!eligible) task.status = "blocked";
     else if (task.status !== "in_progress") task.status = "ready";
   });
