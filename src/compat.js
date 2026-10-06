@@ -1,5 +1,7 @@
 (function () {
   "use strict";
+  var startupFinished = false;
+  var moduleLoaded = false;
 
   if (typeof window.structuredClone !== "function") {
     window.structuredClone = function (value) {
@@ -35,9 +37,27 @@
   }
 
   window.FlowlineCompatibility = {
+    markModuleLoaded: function () {
+      moduleLoaded = true;
+    },
+    showStartupLoading: function () {
+      var app = document.getElementById("app");
+      if (!app || startupFinished) return;
+      app.innerHTML =
+        '<main class="startup-error startup-loading">' +
+          '<section><strong>Flowline을 준비하고 있습니다.</strong>' +
+          '<p>저장된 Workflow 상태를 불러오는 중입니다. 폐쇄망 환경에서는 처음 시작할 때 잠시 걸릴 수 있습니다.</p>' +
+          '<p class="startup-help">계속 표시되면 <b>http://127.0.0.1:5050/api/state</b>를 열어 상태 응답을 확인해 주세요.</p>' +
+          '</section>' +
+        '</main>';
+    },
+    markStartupComplete: function () {
+      startupFinished = true;
+    },
     showStartupError: function (error) {
       var app = document.getElementById("app");
       if (!app) return;
+      startupFinished = true;
       var message = error && error.message ? error.message : String(error || "알 수 없는 오류");
       app.innerHTML =
         '<main class="startup-error">' +
@@ -52,20 +72,22 @@
   };
 
   window.addEventListener("error", function (event) {
-    if (!document.querySelector("#app > *")) {
+    if (!startupFinished) {
       window.FlowlineCompatibility.showStartupError(event.error || event.message);
     }
   });
 
   window.addEventListener("unhandledrejection", function (event) {
-    if (!document.querySelector("#app > *")) {
+    if (!startupFinished) {
       window.FlowlineCompatibility.showStartupError(event.reason);
     }
   });
 
   window.setTimeout(function () {
-    if (!document.querySelector("#app > *")) {
-      window.FlowlineCompatibility.showStartupError("화면 모듈이 실행되지 않았습니다. Edge/Chrome 일반 모드에서 접속해 주세요.");
+    if (!moduleLoaded && !startupFinished) {
+      window.FlowlineCompatibility.showStartupError(
+        "src/app.js 모듈이 실행되지 않았습니다. 서버 실행 폴더에 src 하위 파일이 모두 있는지 확인하고, 브라우저 개발자 도구의 Console 오류를 확인해 주세요."
+      );
     }
-  }, 5000);
+  }, 15000);
 })();

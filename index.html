@@ -9,11 +9,18 @@
     <link rel="stylesheet" href="./relationship.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <main class="startup-error startup-loading">
+        <section>
+          <strong>Flowline을 준비하고 있습니다.</strong>
+          <p>화면 모듈과 저장된 Workflow 상태를 불러오는 중입니다.</p>
+        </section>
+      </main>
+    </div>
     <script src="./src/compat.js"></script>
     <script nomodule>
-      window.FlowlineCompatibility.showStartupError("이 브라우저는 JavaScript 모듈을 지원하지 않습니다. Edge 또는 Chrome 일반 모드를 사용해 주세요.");
+      window.FlowlineCompatibility.showStartupError("이 브라우저는 JavaScript를 지원하지 않습니다. Edge 또는 Chrome 일반 모드를 사용해 주세요.");
     </script>
-    <script type="module" src="./src/app.js"></script>
+    <script src="./src/app.bundle.js"></script>
   </body>
 </html>

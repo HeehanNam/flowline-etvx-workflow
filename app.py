@@ -12,6 +12,15 @@ DB_PATH = DATA_DIR / "flowline.db"
 app = Flask(__name__, static_folder=None)
 
 
+@app.after_request
+def disable_browser_cache(response):
+    if request.path == "/" or request.path.endswith((".html", ".js", ".css")):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 def connection():
     DATA_DIR.mkdir(exist_ok=True)
     db = sqlite3.connect(DB_PATH)
@@ -54,10 +63,20 @@ def index():
     return send_from_directory(BASE_DIR, "index.html")
 
 
+@app.get("/favicon.ico")
+def favicon():
+    return "", 204
+
+
 @app.get("/<path:path>")
 def static_files(path):
     return send_from_directory(BASE_DIR, path)
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5050")), debug=True)
+    app.run(
+        host="127.0.0.1",
+        port=int(os.environ.get("PORT", "5050")),
+        debug=os.environ.get("FLASK_DEBUG") == "1",
+        use_reloader=False,
+    )
