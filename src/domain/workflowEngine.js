@@ -31,15 +31,21 @@ export function toggleChecklist(instance, taskId, itemId, actor) {
   if (!task || !["ready", "in_progress"].includes(task.status)) throw new Error("현재 체크할 수 없는 Task입니다.");
   if (task.status === "ready") { task.status = "in_progress"; task.startedAt = now(); }
   const check = task.checklist.find(c => c.itemId === itemId);
-  if (!actor) throw new Error("GitLab에 로그인해 주세요.");
+  if (!actor) throw new Error("사용자 이름을 먼저 입력해 주세요.");
   check.checked = !check.checked; check.checkedBy = check.checked ? actor.name : null; check.checkedUserId = check.checked ? actor.id : null; check.checkedAt = check.checked ? now() : null; next.updatedAt = now();
   next.history.unshift(event("checklist_changed", actor.name + " · 체크리스트 " + (check.checked ? "체크" : "해제"))); return next;
 }
-export function toggleSubtask(instance, taskId, itemId) {
+export function toggleSubtask(instance, taskId, itemId, actor) {
+  if (!actor) throw new Error("사용자 이름을 먼저 입력해 주세요.");
   const next = structuredClone(instance), task = next.tasks.find(t => t.taskId === taskId);
   if (!task || !["ready", "in_progress"].includes(task.status)) throw new Error("현재 수행할 수 없는 Task입니다.");
   if (task.status === "ready") { task.status = "in_progress"; task.startedAt = now(); }
-  const subtask = task.subtasks.find(item => item.itemId === itemId); subtask.completed = !subtask.completed; next.updatedAt = now(); return next;
+  const subtask = task.subtasks.find(item => item.itemId === itemId); subtask.completed = !subtask.completed;
+  subtask.checkedBy = subtask.completed ? actor.name : null;
+  subtask.checkedUserId = subtask.completed ? actor.id : null;
+  subtask.checkedAt = subtask.completed ? now() : null;
+  next.updatedAt = now();
+  next.history.unshift(event("subtask_changed", actor.name + " · Subtask " + (subtask.completed ? "체크" : "해제"))); return next;
 }
 
 function unlockEligibleTasks(instance) {
@@ -80,7 +86,7 @@ export function resetTask(instance, taskId, scope = "task") {
   const targetIds = scope === "downstream" ? connectedTaskIds(next, taskId) : new Set([taskId]);
   next.tasks.filter(task => targetIds.has(task.taskId)).forEach(task => {
     task.checklist.forEach(item => { item.checked = false; item.checkedBy = null; item.checkedAt = null; item.checkedUserId = null; });
-    task.subtasks.forEach(item => { item.completed = false; });
+    task.subtasks.forEach(item => { item.completed = false; item.checkedBy = null; item.checkedUserId = null; item.checkedAt = null; item.checkedUsername = null; });
     task.startedAt = null;
     task.completedAt = null;
     task.status = "blocked";
@@ -104,9 +110,9 @@ export function reconcileInstanceStructure(instance, message = "실행 중 Workf
   next.tasks = next.definitionSnapshot.tasks.map(definition => {
     const current = previous.get(definition.id);
     const task = current || { taskId: definition.id, status: "blocked", startedAt: null, completedAt: null, subtasks: [], checklist: [] };
-    const subtaskState = new Map((task.subtasks || []).map(item => [item.itemId, item.completed]));
+    const subtaskState = new Map((task.subtasks || []).map(item => [item.itemId, item]));
     const checklistState = new Map((task.checklist || []).map(item => [item.itemId, item]));
-    task.subtasks = definition.subtasks.map(item => ({ itemId: item.id, completed: subtaskState.get(item.id) || false }));
+    task.subtasks = definition.subtasks.map(item => ({ ...subtaskState.get(item.id), itemId: item.id, completed: subtaskState.get(item.id)?.completed || false }));
     task.checklist = definition.checklist.map(item => ({ ...checklistState.get(item.id), itemId: item.id, checked: checklistState.get(item.id)?.checked || false }));
     return task;
   });

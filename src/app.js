@@ -1,7 +1,56 @@
+import{captureScroll,restoreScroll}from"./utils/scrollPosition.js";
+import{escapeHtml}from"./utils/html.js";
 import{seedState}from"./data/seed.js";import{ApiRepository}from"./infrastructure/apiRepository.js";import{createChecklistItem,createSubtask,createTask,createWorkflow,normalizeState,validateWorkflow}from"./domain/workflowModel.js";import{completeTask,reconcileInstanceStructure,resetTask,startInstance,startTask,toggleChecklist,toggleSubtask}from"./domain/workflowEngine.js";import{buildRunReport,cloneWorkflowAsTemplate,downloadText,parseWorkflow,safeFilename,serializeWorkflow}from"./services/workflowTransfer.js";import{pathBetweenPoints,pathData,previewPath}from"./components/workflowMap.js";import{renderLayout}from"./components/layout.js";import{renderDashboard}from"./components/dashboard.js";import{renderWorkflowEditor}from"./components/workflowEditor.js";import{renderRuns}from"./components/runView.js";
 window.FlowlineCompatibility.markModuleLoaded();const repo=new ApiRepository(seedState);const root=document.querySelector("#app");window.FlowlineCompatibility.showStartupLoading();
-Promise.all([repo.load(),fetch("/api/auth").then(r=>r.ok?r.json():{configured:false,user:null}).catch(()=>({configured:false,user:null}))]).then(([loadedState,auth])=>{let state=normalizeState(loadedState),ui={selectedTaskId:null,selectedConnection:null,editingTaskId:null,resetTaskId:null,templateRunId:null,runEditMode:false,drag:null,expandedTaskIds:[],mapZoom:.85};repo.save(state);
-function render(){const oldModal=root.querySelector(".task-modal"),oldForm=oldModal?.querySelector("form[data-form=task]"),scroll=oldModal?{top:oldModal.scrollTop,left:oldModal.scrollLeft,id:oldForm?.dataset.taskId,scope:oldForm?.dataset.scope}:null;const content=state.activeView==="dashboard"?renderDashboard(state):state.activeView==="workflows"?renderWorkflowEditor(state,ui):renderRuns(state,ui);root.innerHTML=renderLayout(state,content)+`<div class="login-status">${auth.user ? `${auth.user.name.replace(/[<>&"]/g, "")} (@${auth.user.username.replace(/[<>&"]/g, "")}) <form method="post" action="/auth/logout"><button>로그아웃</button></form>` : auth.configured ? `<a href="/auth/gitlab">GitLab 로그인</a>` : "GitLab 로그인 설정 필요"}</div>`;const modal=root.querySelector(".task-modal"),form=modal?.querySelector("form[data-form=task]");if(scroll&&modal&&form&&scroll.id===form.dataset.taskId&&scroll.scope===form.dataset.scope){modal.scrollTop=scroll.top;modal.scrollLeft=scroll.left;}}
+Promise.all([repo.load(),fetch("/api/auth").then(r=>r.ok?r.json():{configured:false,user:null}).catch(()=>({configured:false,user:null}))]).then(async ([loadedState,auth])=>{let state=normalizeState(loadedState),ui={selectedTaskId:null,selectedConnection:null,editingTaskId:null,resetTaskId:null,templateRunId:null,runEditMode:false,drag:null,expandedTaskIds:[],mapZoom:.85};repo.save(state);
+const NAME_KEY="flowline.displayName";
+async function saveIdentity(name){
+ if(repo.mode==="local"){auth.user={name:name.trim(),id:null,username:"",provider:"local"};return;}
+ const response=await fetch("/api/auth/name",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+ if(response.status===404||response.status===405)throw Error("실행 중인 서버에 이름 저장 기능이 없습니다. 서버를 종료한 뒤 수정된 프로젝트 폴더에서 python app.py로 다시 시작하고 Ctrl+F5를 눌러 주세요.");
+ if(!(response.headers.get("content-type")||"").includes("application/json"))throw Error("서버가 예상하지 못한 응답을 반환했습니다. 서버 실행 창의 오류와 실행 폴더를 확인해 주세요.");
+ const data=await response.json();if(!response.ok)throw Error(data.error||"이름 저장에 실패했습니다.");if(!data.user?.name)throw Error("서버 응답에 사용자 정보가 없습니다.");auth.user=data.user;
+}
+if(!auth.user||auth.user.provider==="local"){
+ let saved;try{saved=localStorage.getItem(NAME_KEY);}catch{}
+ if(saved){try{await saveIdentity(saved);}catch{auth.user=null;}}
+}
+ui.nameDialog=!auth.user;
+function identityView(){
+ const local=auth.user?.provider==="local";
+ return '<div class="login-status">'+(auth.user?escapeHtml(auth.user.name)+(local?' <button type="button" data-action="change-name">이름 변경</button>':' (@'+escapeHtml(auth.user.username)+') <form method="post" action="/auth/logout"><button>로그아웃</button></form>'):'사용자 이름 입력 필요')+(auth.configured&&(!auth.user||local)?' <a href="/auth/gitlab">GitLab 로그인</a>':'')+'</div>'+(ui.nameDialog?'<div class="modal-backdrop identity-backdrop"><section class="task-modal identity-modal" role="dialog" aria-modal="true" aria-label="사용자 이름"><h2>사용자 이름</h2><p>체크리스트와 Subtask에 표시할 이름을 입력해 주세요.</p><form data-form="identity"><label>이름<input name="name" maxlength="80" required autocomplete="name" value="'+escapeHtml(auth.user?.name||'')+'"></label><small>이 브라우저에서 기억합니다. 공유 PC에서는 사용 전에 이름을 확인해 주세요.</small><p role="alert" class="identity-error"></p><button class="primary" type="submit">시작하기</button></form></section></div>':'');
+}
+root.addEventListener("submit",async e=>{
+ if(e.target.dataset.form!=="identity")return;
+ e.preventDefault();e.stopImmediatePropagation();const form=e.target,button=form.querySelector("button");button.disabled=true;
+ try{const name=String(new FormData(form).get("name")||"").trim();if(!name||name.length>80)throw Error("이름을 1~80자로 입력해 주세요.");await saveIdentity(name);try{localStorage.setItem(NAME_KEY,name);}catch{}ui.nameDialog=false;render();}
+ catch(error){form.querySelector(".identity-error").textContent=error.message;button.disabled=false;}
+});
+
+let renderedContext=null;
+function render(){
+ const context=[state.activeView,state.selectedWorkflowId,state.selectedInstanceId].join("|");
+ const scroll=renderedContext===context?captureScroll(root):null;
+ const content=state.activeView==="dashboard"?renderDashboard(state):state.activeView==="workflows"?renderWorkflowEditor(state,ui):renderRuns(state,ui);
+ root.innerHTML=renderLayout(state,content)+startRunDialog()+identityView();
+ if(scroll)restoreScroll(root,scroll);
+ renderedContext=context;
+}
+
+function startRunDialog(){
+ const workflow=state.workflows.find(w=>w.id===ui.startRunWorkflowId);if(!workflow)return "";
+ return '<div class="modal-backdrop"><section class="task-modal identity-modal" role="dialog" aria-modal="true" aria-label="Workflow 실행 시작"><h2>Workflow 실행 시작</h2><form data-form="start-run"><label>실행 건 이름<input name="name" required maxlength="200" value="'+escapeHtml(workflow.name+' · '+new Date().toLocaleDateString("ko-KR"))+'"></label><div class="reset-actions"><button type="button" class="secondary" data-action="cancel-start-run">취소</button><button class="primary" type="submit">실행 시작</button></div></form></section></div>';
+}
+root.addEventListener("submit",e=>{
+ if(e.target.dataset.form!=="start-run")return;
+ e.preventDefault();e.stopImmediatePropagation();
+ try{
+  const workflow=state.workflows.find(w=>w.id===ui.startRunWorkflowId);if(!workflow)throw Error("Workflow를 찾을 수 없습니다.");
+  const errors=validateWorkflow(workflow);if(errors.length)throw Error(errors[0]);
+  const name=String(new FormData(e.target).get("name")||"").trim();if(!name)throw Error("실행 건 이름을 입력해 주세요.");
+  const run=startInstance(workflow,name);state.instances.unshift(run);state.selectedInstanceId=run.id;state.activeView="runs";ui.startRunWorkflowId=null;ui.selectedTaskId=null;ui.runEditMode=false;commit();
+ }catch(error){toast(error.message,"error");}
+});
 let itemDrag = null;
 root.addEventListener("dragstart", e => {
  const handle=e.target.closest(".item-drag-handle");if(!handle)return;
@@ -31,7 +80,7 @@ root.addEventListener("drop", e => {
 });
 root.addEventListener("dragend",()=>{itemDrag=null;root.querySelectorAll(".item-drop-target,.item-dragging").forEach(x=>x.classList.remove("item-drop-target","item-dragging"));});
 function commit(){repo.save(state);render()}function toast(msg,kind="info"){const e=document.querySelector("#toast");e.textContent=msg;e.className=`toast show ${kind}`;setTimeout(()=>e.className="toast",2500)}
-root.addEventListener("click",e=>{const t=e.target.closest("[data-action]");if(!t)return;const a=t.dataset.action;try{
+root.addEventListener("click",e=>{const t=e.target.closest("[data-action]");if(!t)return;const a=t.dataset.action;try{if(a==="change-name"){ui.nameDialog=true;render();return;}
  if(a==="modal-panel")return
  if(a==="navigate"){state.activeView=t.dataset.view;ui.selectedTaskId=null;ui.selectedConnection=null;ui.editingTaskId=null;ui.runEditMode=false;commit()}
  if(a==="select-task"){clearTimeout(ui.clickTimer);ui.clickTimer=setTimeout(()=>{ui.selectedTaskId=t.dataset.taskId;ui.selectedConnection=null;render()},220);return}
@@ -61,10 +110,11 @@ root.addEventListener("click",e=>{const t=e.target.closest("[data-action]");if(!
  if(a==="delete-subtask"){syncOpenTaskForm();const task=taskForScope(t.dataset.scope,t.dataset.taskId);task.subtasks=task.subtasks.filter(i=>i.id!==t.dataset.itemId);if(t.dataset.scope==="run")reconcileSelectedRun(`“${task.title}”의 Subtask를 삭제했습니다.`);commit()}
  if(a==="delete-task"){if(!confirm("이 Task를 삭제할까요?"))return;const runScope=t.dataset.scope==="run",w=runScope?selectedRun().definitionSnapshot:selectedWorkflow();if(w.tasks.length===1)throw Error("마지막 Task는 삭제할 수 없습니다.");const title=w.tasks.find(x=>x.id===t.dataset.taskId)?.title||"Task";w.tasks=w.tasks.filter(x=>x.id!==t.dataset.taskId);w.tasks.forEach(x=>x.dependencies=x.dependencies.filter(id=>id!==t.dataset.taskId));if(runScope)reconcileSelectedRun(`실행 중 “${title}” Task를 삭제했습니다.`);ui.selectedTaskId=null;ui.selectedConnection=null;ui.editingTaskId=null;commit()}
  if(a==="delete-workflow"){if(!confirm("Workflow 정의를 삭제할까요? 기존 실행 기록은 유지됩니다."))return;state.workflows=state.workflows.filter(w=>w.id!==t.dataset.workflowId);state.selectedWorkflowId=state.workflows[0]?.id||null;ui.selectedConnection=null;commit()}
- if(a==="start-run"){const w=state.workflows.find(w=>w.id===t.dataset.workflowId),errors=validateWorkflow(w);if(errors.length)throw Error(errors[0]);const name=prompt("실행 건 이름을 입력하세요.",`${w.name} · ${new Date().toLocaleDateString("ko-KR")}`);if(name===null)return;const run=startInstance(w,name);state.instances.unshift(run);state.selectedInstanceId=run.id;state.activeView="runs";ui.selectedTaskId=null;ui.runEditMode=false;commit()}
+ if(a==="start-run"){const w=state.workflows.find(w=>w.id===t.dataset.workflowId),errors=validateWorkflow(w);if(errors.length)throw Error(errors[0]);ui.startRunWorkflowId=w.id;render();root.querySelector("form[data-form=start-run] input")?.focus();return}
+ if(a==="cancel-start-run"){ui.startRunWorkflowId=null;render();return}
  if(a==="open-run"){state.selectedInstanceId=t.dataset.runId;state.activeView="runs";ui.selectedTaskId=null;ui.runEditMode=false;commit()}
  if(a==="start-task")updateRun(r=>startTask(r,t.dataset.taskId));if(a==="toggle-check")updateRun(r=>toggleChecklist(r,t.dataset.taskId,t.dataset.itemId,auth.user));if(a==="complete-task")updateRun(r=>completeTask(r,t.dataset.taskId));
- if(a==="toggle-subtask")updateRun(r=>toggleSubtask(r,t.dataset.taskId,t.dataset.itemId));
+ if(a==="toggle-subtask")updateRun(r=>toggleSubtask(r,t.dataset.taskId,t.dataset.itemId,auth.user));
 }catch(err){toast(err.message,"error")}});
 root.addEventListener("change",e=>{const a=e.target.dataset.action;if(a==="select-workflow"){state.selectedWorkflowId=e.target.value;ui.selectedTaskId=null;ui.selectedConnection=null;commit()}if(a==="select-run"){state.selectedInstanceId=e.target.value;ui.selectedTaskId=null;ui.selectedConnection=null;ui.editingTaskId=null;ui.runEditMode=false;commit()}});
 root.addEventListener("change",async e=>{const input=e.target.closest("[data-workflow-import]");if(!input?.files?.[0])return;try{const workflow=parseWorkflow(await input.files[0].text()),errors=validateWorkflow(workflow);if(errors.length)throw Error(errors[0]);state.workflows.push(workflow);state.selectedWorkflowId=workflow.id;ui.selectedTaskId=workflow.tasks[0]?.id||null;ui.selectedConnection=null;commit();setTimeout(()=>toast("Workflow JSON을 가져왔습니다.","success"),0)}catch(error){toast(error.message,"error")}finally{input.value=""}});

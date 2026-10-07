@@ -52,6 +52,37 @@ function taskSchedule(task) {
 __flowlineModules["utils/html"] = { escapeHtml, formatDate, linkedText, taskSchedule };
 })();
 
+// utils/scrollPosition.js
+(function () {
+const selectors = [".detail-panel", ".free-canvas-wrap", ".mindmap-wrap", ".task-modal", ".reset-modal", "textarea"];
+
+function identity(element) {
+  const form = element.closest("form") || element.querySelector("form");
+  return [form?.dataset.form, form?.dataset.taskId, form?.dataset.scope, element.getAttribute("name")].join("|");
+}
+
+function captureScroll(root, viewport = window) {
+  return {
+    x: viewport.scrollX, y: viewport.scrollY,
+    panels: selectors.flatMap(selector => Array.from(root.querySelectorAll(selector), (element, index) => ({
+      selector, index, identity: identity(element), top: element.scrollTop, left: element.scrollLeft
+    })))
+  };
+}
+
+function restoreScroll(root, snapshot, viewport = window) {
+  for (const panel of snapshot.panels) {
+    const element = root.querySelectorAll(panel.selector)[panel.index];
+    if (!element || identity(element) !== panel.identity) continue;
+    element.scrollTop = panel.top;
+    element.scrollLeft = panel.left;
+  }
+  viewport.scrollTo({ left: snapshot.x, top: snapshot.y, behavior: "instant" });
+}
+
+__flowlineModules["utils/scrollPosition"] = { captureScroll, restoreScroll };
+})();
+
 // data/seed.js
 (function () {
 const seedState = { workflows: [{
@@ -210,15 +241,21 @@ function toggleChecklist(instance, taskId, itemId, actor) {
   if (!task || !["ready", "in_progress"].includes(task.status)) throw new Error("현재 체크할 수 없는 Task입니다.");
   if (task.status === "ready") { task.status = "in_progress"; task.startedAt = now(); }
   const check = task.checklist.find(c => c.itemId === itemId);
-  if (!actor) throw new Error("GitLab에 로그인해 주세요.");
+  if (!actor) throw new Error("사용자 이름을 먼저 입력해 주세요.");
   check.checked = !check.checked; check.checkedBy = check.checked ? actor.name : null; check.checkedUserId = check.checked ? actor.id : null; check.checkedAt = check.checked ? now() : null; next.updatedAt = now();
   next.history.unshift(event("checklist_changed", actor.name + " · 체크리스트 " + (check.checked ? "체크" : "해제"))); return next;
 }
-function toggleSubtask(instance, taskId, itemId) {
+function toggleSubtask(instance, taskId, itemId, actor) {
+  if (!actor) throw new Error("사용자 이름을 먼저 입력해 주세요.");
   const next = structuredClone(instance), task = next.tasks.find(t => t.taskId === taskId);
   if (!task || !["ready", "in_progress"].includes(task.status)) throw new Error("현재 수행할 수 없는 Task입니다.");
   if (task.status === "ready") { task.status = "in_progress"; task.startedAt = now(); }
-  const subtask = task.subtasks.find(item => item.itemId === itemId); subtask.completed = !subtask.completed; next.updatedAt = now(); return next;
+  const subtask = task.subtasks.find(item => item.itemId === itemId); subtask.completed = !subtask.completed;
+  subtask.checkedBy = subtask.completed ? actor.name : null;
+  subtask.checkedUserId = subtask.completed ? actor.id : null;
+  subtask.checkedAt = subtask.completed ? now() : null;
+  next.updatedAt = now();
+  next.history.unshift(event("subtask_changed", actor.name + " · Subtask " + (subtask.completed ? "체크" : "해제"))); return next;
 }
 
 function unlockEligibleTasks(instance) {
@@ -259,7 +296,7 @@ function resetTask(instance, taskId, scope = "task") {
   const targetIds = scope === "downstream" ? connectedTaskIds(next, taskId) : new Set([taskId]);
   next.tasks.filter(task => targetIds.has(task.taskId)).forEach(task => {
     task.checklist.forEach(item => { item.checked = false; item.checkedBy = null; item.checkedAt = null; item.checkedUserId = null; });
-    task.subtasks.forEach(item => { item.completed = false; });
+    task.subtasks.forEach(item => { item.completed = false; item.checkedBy = null; item.checkedUserId = null; item.checkedAt = null; item.checkedUsername = null; });
     task.startedAt = null;
     task.completedAt = null;
     task.status = "blocked";
@@ -283,9 +320,9 @@ function reconcileInstanceStructure(instance, message = "실행 중 Workflow 절
   next.tasks = next.definitionSnapshot.tasks.map(definition => {
     const current = previous.get(definition.id);
     const task = current || { taskId: definition.id, status: "blocked", startedAt: null, completedAt: null, subtasks: [], checklist: [] };
-    const subtaskState = new Map((task.subtasks || []).map(item => [item.itemId, item.completed]));
+    const subtaskState = new Map((task.subtasks || []).map(item => [item.itemId, item]));
     const checklistState = new Map((task.checklist || []).map(item => [item.itemId, item]));
-    task.subtasks = definition.subtasks.map(item => ({ itemId: item.id, completed: subtaskState.get(item.id) || false }));
+    task.subtasks = definition.subtasks.map(item => ({ ...subtaskState.get(item.id), itemId: item.id, completed: subtaskState.get(item.id)?.completed || false }));
     task.checklist = definition.checklist.map(item => ({ ...checklistState.get(item.id), itemId: item.id, checked: checklistState.get(item.id)?.checked || false }));
     return task;
   });
@@ -509,7 +546,7 @@ function taskNode(task,workflow,instance,selected,expandedIds,index){
  const run=instance&&instance.tasks.find(item=>item.taskId===task.id),status=run?run.status:"definition";
  const deps=task.dependencies.map(id=>{const parent=workflow.tasks.find(item=>item.id===id);return parent&&parent.title}).filter(Boolean);
  const expanded=expandedIds.includes(task.id),subtaskState=id=>{const value=run&&run.subtasks.find(item=>item.itemId===id);return value&&value.completed};
- return `<div class="canvas-task-group ${selected===task.id?"selected":""}" data-task-card data-task-id="${task.id}" style="left:${task.position.x}px;top:${task.position.y}px">${instance?"":`<button class="connection-handle input" data-connect-input data-task-id="${task.id}" title="여기에 연결"></button><button class="connection-handle output" data-connect-output data-task-id="${task.id}" title="드래그하여 Task 연결">＋</button>`}<button class="flow-node canvas-node ${status} priority-${task.priority}" data-action="select-task" data-task-id="${task.id}"><div class="node-top"><span class="task-kind">TASK ${String(index+1).padStart(2,"0")}</span>${run?`<span class="status-pill ${status}">${labels[status]}</span>`:`<span class="priority-badge">${priorities[task.priority]}</span>`}</div><strong>${escapeHtml(task.title)}<small class="task-schedule">${escapeHtml(taskSchedule(task))}</small></strong><span class="assignee">${escapeHtml(task.assignee)}</span><span class="dependency-label">${deps.length?`← ${escapeHtml(deps.join(", "))}`:"⚡ 시작 Task"}</span><div class="node-checks"><span>${task.subtasks.length} subtask · ${task.checklist.length} check</span>${run?`<span>${run.checklist.filter(item=>item.checked).length}/${run.checklist.length}</span>`:""}</div></button>${task.subtasks.length?`<button class="subtask-toggle ${expanded?"open":""}" data-action="toggle-map-subtasks" data-task-id="${task.id}"><span>${expanded?"−":"＋"}</span> Subtask ${task.subtasks.length}개 ${expanded?"접기":"보기"}</button>`:""}${expanded?`<div class="map-subtasks">${task.subtasks.map((sub,subIndex)=>`<div class="subtask-grid-row ${subtaskState(sub.id)?"done":""}"><span class="elbow"><i></i><b>›</b></span><div class="map-subtask"><i>${subIndex+1}</i><span>${escapeHtml(sub.title)}</span>${sub.required?"<em>필수</em>":""}</div></div>`).join("")}</div>`:""}</div>`;
+ return `<div class="canvas-task-group ${selected===task.id?"selected":""}" data-task-card data-task-id="${task.id}" style="left:${task.position.x}px;top:${task.position.y}px">${instance?"":`<button class="connection-handle input" data-connect-input data-task-id="${task.id}" title="여기에 연결"></button><button class="connection-handle output" data-connect-output data-task-id="${task.id}" title="드래그하여 Task 연결">＋</button>`}<button class="flow-node canvas-node ${status} priority-${task.priority}" data-action="select-task" data-task-id="${task.id}"><div class="node-top"><span class="task-kind">TASK ${String(index+1).padStart(2,"0")}</span>${run?`<span class="status-pill ${status}">${labels[status]}</span>`:`<span class="priority-badge">${priorities[task.priority]}</span>`}</div><strong>${escapeHtml(task.title)}<small class="task-schedule">${escapeHtml(taskSchedule(task))}</small></strong><span class="assignee">${escapeHtml(task.assignee)}</span><span class="dependency-label">${deps.length?`← ${escapeHtml(deps.join(", "))}`:"⚡ 시작 Task"}</span><div class="node-checks"><span>${task.subtasks.filter(item=>run?.subtasks.some(value=>value.itemId===item.id&&value.completed)).length}/${task.subtasks.length} subtask · ${task.checklist.filter(item=>run?.checklist.some(value=>value.itemId===item.id&&value.checked)).length}/${task.checklist.length} check</span></div></button>${task.subtasks.length?`<button class="subtask-toggle ${expanded?"open":""}" data-action="toggle-map-subtasks" data-task-id="${task.id}"><span>${expanded?"−":"＋"}</span> Subtask ${task.subtasks.length}개 ${expanded?"접기":"보기"}</button>`:""}${expanded?`<div class="map-subtasks">${task.subtasks.map((sub,subIndex)=>`<div class="subtask-grid-row ${subtaskState(sub.id)?"done":""}"><span class="elbow"><i></i><b>›</b></span><div class="map-subtask"><i>${subIndex+1}</i><span>${escapeHtml(sub.title)}</span>${sub.required?"<em>필수</em>":""}</div></div>`).join("")}</div>`:""}</div>`;
 }
 
 __flowlineModules["components/workflowMap"] = { workflowMap, pathData, previewPath, pathBetweenPoints };
@@ -581,7 +618,7 @@ function templateDialog(run){return `<div class="modal-backdrop" data-action="cl
 function runtime(task,runtimeTask,run,editing=false){
  const allowed=requiredChecksComplete(run,task.id),disabled=["blocked","completed"].includes(runtimeTask.status);
  const hasProgress=runtimeTask.startedAt||runtimeTask.completedAt||runtimeTask.checklist.some(item=>item.checked)||runtimeTask.subtasks.some(item=>item.completed);
- return `<div class="panel-title"><div><span class="status-pill ${runtimeTask.status}">${labels[runtimeTask.status]}</span><h3>${escapeHtml(task.title)}${escapeHtml(taskSchedule(task))}</h3><p class="owner">담당 · ${escapeHtml(task.assignee)} · 우선순위 ${task.priority}</p></div></div>${editing?`<button class="primary full run-task-edit" data-action="open-task-settings" data-task-id="${task.id}">이 실행 건의 Task 설정</button>`:""}${criteria("E","진입 기준",task.entry)}${criteria("T","수행 내용",task.instructions||"등록된 수행 지침이 없습니다.")}${task.subtasks.length?`<div class="runtime-checks subtasks"><div class="criteria-head"><b>S</b><div><span>Subtask</span><small>${runtimeTask.subtasks.filter(item=>item.completed).length}/${runtimeTask.subtasks.length} 완료</small></div></div>${task.subtasks.map(item=>{const done=runtimeTask.subtasks.find(value=>value.itemId===item.id)?.completed;return `<label class="runtime-check ${disabled?"disabled":""}"><input type="checkbox" data-action="toggle-subtask" data-task-id="${task.id}" data-item-id="${item.id}" ${done?"checked":""} ${disabled?"disabled":""}><span>${escapeHtml(item.title)}</span>${item.required?"<em>필수</em>":""}</label>`;}).join("")}</div>`:""}<div class="runtime-checks"><div class="criteria-head"><b>V</b><div><span>완료 체크리스트</span><small>${runtimeTask.checklist.filter(item=>item.checked).length}/${runtimeTask.checklist.length} 완료</small></div></div>${task.checklist.map(item=>{const record=runtimeTask.checklist.find(value=>value.itemId===item.id),checked=record?.checked;return `<label class="runtime-check ${disabled?"disabled":""}"><input type="checkbox" data-action="toggle-check" data-task-id="${task.id}" data-item-id="${item.id}" ${checked?"checked":""} ${disabled?"disabled":""}><span>${escapeHtml(item.text)}${checked ? `<small class="check-audit">${escapeHtml(record.checkedBy || "기록 없음")} · ${record.checkedAt ? escapeHtml(formatDate(record.checkedAt)) : "시각 기록 없음"}</small>` : ""}</span>${item.required?"<em>필수</em>":""}</label>`;}).join("")}</div>${criteria("X","완료 기준",task.exit)}<div class="task-memo-preview"><span>메모 링크</span><p>${linkedText(task.memo || "")}</p></div><form data-form="task-memo" data-task-id="${task.id}"><label>Task 메모<textarea name="memo">${escapeHtml(task.memo || "")}</textarea></label><button class="secondary" type="submit">메모 저장</button></form>${editing?"":runtimeTask.status==="ready"?`<button class="primary full" data-action="start-task" data-task-id="${task.id}">업무 시작</button>`:""}${editing?"":runtimeTask.status==="in_progress"?`<button class="primary full" data-action="complete-task" data-task-id="${task.id}" ${allowed?"":"disabled"}>${allowed?"Task 완료":"필수 Subtask와 체크리스트를 완료해 주세요"}</button>`:""}${editing?"":runtimeTask.status==="blocked"?`<div class="blocked-note">선행 Task가 모두 완료되면 자동으로 열립니다.</div>`:""}${editing?"":runtimeTask.status==="completed"?`<div class="completed-note">✓ ${formatDate(runtimeTask.completedAt)} 완료</div>`:""}${editing?"":hasProgress?`<button class="reset-button full" data-action="open-reset-dialog" data-task-id="${task.id}">↺ Task 재수행 · Reset</button>`:""}`;
+ return `<div class="panel-title"><div><span class="status-pill ${runtimeTask.status}">${labels[runtimeTask.status]}</span><h3>${escapeHtml(task.title)}${escapeHtml(taskSchedule(task))}</h3><p class="owner">담당 · ${escapeHtml(task.assignee)} · 우선순위 ${task.priority}</p></div></div>${editing?`<button class="primary full run-task-edit" data-action="open-task-settings" data-task-id="${task.id}">이 실행 건의 Task 설정</button>`:""}${criteria("E","진입 기준",task.entry)}${criteria("T","수행 내용",task.instructions||"등록된 수행 지침이 없습니다.")}${task.subtasks.length?`<div class="runtime-checks subtasks"><div class="criteria-head"><b>S</b><div><span>Subtask</span><small>${runtimeTask.subtasks.filter(item=>item.completed).length}/${runtimeTask.subtasks.length} 완료</small></div></div>${task.subtasks.map(item=>{const record=runtimeTask.subtasks.find(value=>value.itemId===item.id),done=record?.completed;return `<label class="runtime-check ${disabled?"disabled":""}"><input type="checkbox" data-action="toggle-subtask" data-task-id="${task.id}" data-item-id="${item.id}" ${done?"checked":""} ${disabled?"disabled":""}><span>${escapeHtml(item.title)}${done ? `<small class="check-audit">${escapeHtml(record.checkedBy || "기록 없음")} · ${record.checkedAt ? escapeHtml(formatDate(record.checkedAt)) : "시각 기록 없음"}</small>` : ""}</span>${item.required?"<em>필수</em>":""}</label>`;}).join("")}</div>`:""}<div class="runtime-checks"><div class="criteria-head"><b>V</b><div><span>완료 체크리스트</span><small>${runtimeTask.checklist.filter(item=>item.checked).length}/${runtimeTask.checklist.length} 완료</small></div></div>${task.checklist.map(item=>{const record=runtimeTask.checklist.find(value=>value.itemId===item.id),checked=record?.checked;return `<label class="runtime-check ${disabled?"disabled":""}"><input type="checkbox" data-action="toggle-check" data-task-id="${task.id}" data-item-id="${item.id}" ${checked?"checked":""} ${disabled?"disabled":""}><span>${escapeHtml(item.text)}${checked ? `<small class="check-audit">${escapeHtml(record.checkedBy || "기록 없음")} · ${record.checkedAt ? escapeHtml(formatDate(record.checkedAt)) : "시각 기록 없음"}</small>` : ""}</span>${item.required?"<em>필수</em>":""}</label>`;}).join("")}</div>${criteria("X","완료 기준",task.exit)}<div class="task-memo-preview"><span>메모 링크</span><p>${linkedText(task.memo || "")}</p></div><form data-form="task-memo" data-task-id="${task.id}"><label>Task 메모<textarea name="memo">${escapeHtml(task.memo || "")}</textarea></label><button class="secondary" type="submit">메모 저장</button></form>${editing?"":runtimeTask.status==="ready"?`<button class="primary full" data-action="start-task" data-task-id="${task.id}">업무 시작</button>`:""}${editing?"":runtimeTask.status==="in_progress"?`<button class="primary full" data-action="complete-task" data-task-id="${task.id}" ${allowed?"":"disabled"}>${allowed?"Task 완료":"필수 Subtask와 체크리스트를 완료해 주세요"}</button>`:""}${editing?"":runtimeTask.status==="blocked"?`<div class="blocked-note">선행 Task가 모두 완료되면 자동으로 열립니다.</div>`:""}${editing?"":runtimeTask.status==="completed"?`<div class="completed-note">✓ ${formatDate(runtimeTask.completedAt)} 완료</div>`:""}${editing?"":hasProgress?`<button class="reset-button full" data-action="open-reset-dialog" data-task-id="${task.id}">↺ Task 재수행 · Reset</button>`:""}`;
 }
 
 function resetDialog(task,workflow){
@@ -597,10 +634,59 @@ __flowlineModules["components/runView"] = { renderRuns };
 
 // app.js
 (function () {
+const { captureScroll,restoreScroll } = __flowlineModules["utils/scrollPosition"];
+const { escapeHtml } = __flowlineModules["utils/html"];
 const { seedState } = __flowlineModules["data/seed"];const { ApiRepository } = __flowlineModules["infrastructure/apiRepository"];const { createChecklistItem,createSubtask,createTask,createWorkflow,normalizeState,validateWorkflow } = __flowlineModules["domain/workflowModel"];const { completeTask,reconcileInstanceStructure,resetTask,startInstance,startTask,toggleChecklist,toggleSubtask } = __flowlineModules["domain/workflowEngine"];const { buildRunReport,cloneWorkflowAsTemplate,downloadText,parseWorkflow,safeFilename,serializeWorkflow } = __flowlineModules["services/workflowTransfer"];const { pathBetweenPoints,pathData,previewPath } = __flowlineModules["components/workflowMap"];const { renderLayout } = __flowlineModules["components/layout"];const { renderDashboard } = __flowlineModules["components/dashboard"];const { renderWorkflowEditor } = __flowlineModules["components/workflowEditor"];const { renderRuns } = __flowlineModules["components/runView"];
 window.FlowlineCompatibility.markModuleLoaded();const repo=new ApiRepository(seedState);const root=document.querySelector("#app");window.FlowlineCompatibility.showStartupLoading();
-Promise.all([repo.load(),fetch("/api/auth").then(r=>r.ok?r.json():{configured:false,user:null}).catch(()=>({configured:false,user:null}))]).then(([loadedState,auth])=>{let state=normalizeState(loadedState),ui={selectedTaskId:null,selectedConnection:null,editingTaskId:null,resetTaskId:null,templateRunId:null,runEditMode:false,drag:null,expandedTaskIds:[],mapZoom:.85};repo.save(state);
-function render(){const oldModal=root.querySelector(".task-modal"),oldForm=oldModal?.querySelector("form[data-form=task]"),scroll=oldModal?{top:oldModal.scrollTop,left:oldModal.scrollLeft,id:oldForm?.dataset.taskId,scope:oldForm?.dataset.scope}:null;const content=state.activeView==="dashboard"?renderDashboard(state):state.activeView==="workflows"?renderWorkflowEditor(state,ui):renderRuns(state,ui);root.innerHTML=renderLayout(state,content)+`<div class="login-status">${auth.user ? `${auth.user.name.replace(/[<>&"]/g, "")} (@${auth.user.username.replace(/[<>&"]/g, "")}) <form method="post" action="/auth/logout"><button>로그아웃</button></form>` : auth.configured ? `<a href="/auth/gitlab">GitLab 로그인</a>` : "GitLab 로그인 설정 필요"}</div>`;const modal=root.querySelector(".task-modal"),form=modal?.querySelector("form[data-form=task]");if(scroll&&modal&&form&&scroll.id===form.dataset.taskId&&scroll.scope===form.dataset.scope){modal.scrollTop=scroll.top;modal.scrollLeft=scroll.left;}}
+Promise.all([repo.load(),fetch("/api/auth").then(r=>r.ok?r.json():{configured:false,user:null}).catch(()=>({configured:false,user:null}))]).then(async ([loadedState,auth])=>{let state=normalizeState(loadedState),ui={selectedTaskId:null,selectedConnection:null,editingTaskId:null,resetTaskId:null,templateRunId:null,runEditMode:false,drag:null,expandedTaskIds:[],mapZoom:.85};repo.save(state);
+const NAME_KEY="flowline.displayName";
+async function saveIdentity(name){
+ if(repo.mode==="local"){auth.user={name:name.trim(),id:null,username:"",provider:"local"};return;}
+ const response=await fetch("/api/auth/name",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+ if(response.status===404||response.status===405)throw Error("실행 중인 서버에 이름 저장 기능이 없습니다. 서버를 종료한 뒤 수정된 프로젝트 폴더에서 python app.py로 다시 시작하고 Ctrl+F5를 눌러 주세요.");
+ if(!(response.headers.get("content-type")||"").includes("application/json"))throw Error("서버가 예상하지 못한 응답을 반환했습니다. 서버 실행 창의 오류와 실행 폴더를 확인해 주세요.");
+ const data=await response.json();if(!response.ok)throw Error(data.error||"이름 저장에 실패했습니다.");if(!data.user?.name)throw Error("서버 응답에 사용자 정보가 없습니다.");auth.user=data.user;
+}
+if(!auth.user||auth.user.provider==="local"){
+ let saved;try{saved=localStorage.getItem(NAME_KEY);}catch{}
+ if(saved){try{await saveIdentity(saved);}catch{auth.user=null;}}
+}
+ui.nameDialog=!auth.user;
+function identityView(){
+ const local=auth.user?.provider==="local";
+ return '<div class="login-status">'+(auth.user?escapeHtml(auth.user.name)+(local?' <button type="button" data-action="change-name">이름 변경</button>':' (@'+escapeHtml(auth.user.username)+') <form method="post" action="/auth/logout"><button>로그아웃</button></form>'):'사용자 이름 입력 필요')+(auth.configured&&(!auth.user||local)?' <a href="/auth/gitlab">GitLab 로그인</a>':'')+'</div>'+(ui.nameDialog?'<div class="modal-backdrop identity-backdrop"><section class="task-modal identity-modal" role="dialog" aria-modal="true" aria-label="사용자 이름"><h2>사용자 이름</h2><p>체크리스트와 Subtask에 표시할 이름을 입력해 주세요.</p><form data-form="identity"><label>이름<input name="name" maxlength="80" required autocomplete="name" value="'+escapeHtml(auth.user?.name||'')+'"></label><small>이 브라우저에서 기억합니다. 공유 PC에서는 사용 전에 이름을 확인해 주세요.</small><p role="alert" class="identity-error"></p><button class="primary" type="submit">시작하기</button></form></section></div>':'');
+}
+root.addEventListener("submit",async e=>{
+ if(e.target.dataset.form!=="identity")return;
+ e.preventDefault();e.stopImmediatePropagation();const form=e.target,button=form.querySelector("button");button.disabled=true;
+ try{const name=String(new FormData(form).get("name")||"").trim();if(!name||name.length>80)throw Error("이름을 1~80자로 입력해 주세요.");await saveIdentity(name);try{localStorage.setItem(NAME_KEY,name);}catch{}ui.nameDialog=false;render();}
+ catch(error){form.querySelector(".identity-error").textContent=error.message;button.disabled=false;}
+});
+
+let renderedContext=null;
+function render(){
+ const context=[state.activeView,state.selectedWorkflowId,state.selectedInstanceId].join("|");
+ const scroll=renderedContext===context?captureScroll(root):null;
+ const content=state.activeView==="dashboard"?renderDashboard(state):state.activeView==="workflows"?renderWorkflowEditor(state,ui):renderRuns(state,ui);
+ root.innerHTML=renderLayout(state,content)+startRunDialog()+identityView();
+ if(scroll)restoreScroll(root,scroll);
+ renderedContext=context;
+}
+
+function startRunDialog(){
+ const workflow=state.workflows.find(w=>w.id===ui.startRunWorkflowId);if(!workflow)return "";
+ return '<div class="modal-backdrop"><section class="task-modal identity-modal" role="dialog" aria-modal="true" aria-label="Workflow 실행 시작"><h2>Workflow 실행 시작</h2><form data-form="start-run"><label>실행 건 이름<input name="name" required maxlength="200" value="'+escapeHtml(workflow.name+' · '+new Date().toLocaleDateString("ko-KR"))+'"></label><div class="reset-actions"><button type="button" class="secondary" data-action="cancel-start-run">취소</button><button class="primary" type="submit">실행 시작</button></div></form></section></div>';
+}
+root.addEventListener("submit",e=>{
+ if(e.target.dataset.form!=="start-run")return;
+ e.preventDefault();e.stopImmediatePropagation();
+ try{
+  const workflow=state.workflows.find(w=>w.id===ui.startRunWorkflowId);if(!workflow)throw Error("Workflow를 찾을 수 없습니다.");
+  const errors=validateWorkflow(workflow);if(errors.length)throw Error(errors[0]);
+  const name=String(new FormData(e.target).get("name")||"").trim();if(!name)throw Error("실행 건 이름을 입력해 주세요.");
+  const run=startInstance(workflow,name);state.instances.unshift(run);state.selectedInstanceId=run.id;state.activeView="runs";ui.startRunWorkflowId=null;ui.selectedTaskId=null;ui.runEditMode=false;commit();
+ }catch(error){toast(error.message,"error");}
+});
 let itemDrag = null;
 root.addEventListener("dragstart", e => {
  const handle=e.target.closest(".item-drag-handle");if(!handle)return;
@@ -630,7 +716,7 @@ root.addEventListener("drop", e => {
 });
 root.addEventListener("dragend",()=>{itemDrag=null;root.querySelectorAll(".item-drop-target,.item-dragging").forEach(x=>x.classList.remove("item-drop-target","item-dragging"));});
 function commit(){repo.save(state);render()}function toast(msg,kind="info"){const e=document.querySelector("#toast");e.textContent=msg;e.className=`toast show ${kind}`;setTimeout(()=>e.className="toast",2500)}
-root.addEventListener("click",e=>{const t=e.target.closest("[data-action]");if(!t)return;const a=t.dataset.action;try{
+root.addEventListener("click",e=>{const t=e.target.closest("[data-action]");if(!t)return;const a=t.dataset.action;try{if(a==="change-name"){ui.nameDialog=true;render();return;}
  if(a==="modal-panel")return
  if(a==="navigate"){state.activeView=t.dataset.view;ui.selectedTaskId=null;ui.selectedConnection=null;ui.editingTaskId=null;ui.runEditMode=false;commit()}
  if(a==="select-task"){clearTimeout(ui.clickTimer);ui.clickTimer=setTimeout(()=>{ui.selectedTaskId=t.dataset.taskId;ui.selectedConnection=null;render()},220);return}
@@ -660,10 +746,11 @@ root.addEventListener("click",e=>{const t=e.target.closest("[data-action]");if(!
  if(a==="delete-subtask"){syncOpenTaskForm();const task=taskForScope(t.dataset.scope,t.dataset.taskId);task.subtasks=task.subtasks.filter(i=>i.id!==t.dataset.itemId);if(t.dataset.scope==="run")reconcileSelectedRun(`“${task.title}”의 Subtask를 삭제했습니다.`);commit()}
  if(a==="delete-task"){if(!confirm("이 Task를 삭제할까요?"))return;const runScope=t.dataset.scope==="run",w=runScope?selectedRun().definitionSnapshot:selectedWorkflow();if(w.tasks.length===1)throw Error("마지막 Task는 삭제할 수 없습니다.");const title=w.tasks.find(x=>x.id===t.dataset.taskId)?.title||"Task";w.tasks=w.tasks.filter(x=>x.id!==t.dataset.taskId);w.tasks.forEach(x=>x.dependencies=x.dependencies.filter(id=>id!==t.dataset.taskId));if(runScope)reconcileSelectedRun(`실행 중 “${title}” Task를 삭제했습니다.`);ui.selectedTaskId=null;ui.selectedConnection=null;ui.editingTaskId=null;commit()}
  if(a==="delete-workflow"){if(!confirm("Workflow 정의를 삭제할까요? 기존 실행 기록은 유지됩니다."))return;state.workflows=state.workflows.filter(w=>w.id!==t.dataset.workflowId);state.selectedWorkflowId=state.workflows[0]?.id||null;ui.selectedConnection=null;commit()}
- if(a==="start-run"){const w=state.workflows.find(w=>w.id===t.dataset.workflowId),errors=validateWorkflow(w);if(errors.length)throw Error(errors[0]);const name=prompt("실행 건 이름을 입력하세요.",`${w.name} · ${new Date().toLocaleDateString("ko-KR")}`);if(name===null)return;const run=startInstance(w,name);state.instances.unshift(run);state.selectedInstanceId=run.id;state.activeView="runs";ui.selectedTaskId=null;ui.runEditMode=false;commit()}
+ if(a==="start-run"){const w=state.workflows.find(w=>w.id===t.dataset.workflowId),errors=validateWorkflow(w);if(errors.length)throw Error(errors[0]);ui.startRunWorkflowId=w.id;render();root.querySelector("form[data-form=start-run] input")?.focus();return}
+ if(a==="cancel-start-run"){ui.startRunWorkflowId=null;render();return}
  if(a==="open-run"){state.selectedInstanceId=t.dataset.runId;state.activeView="runs";ui.selectedTaskId=null;ui.runEditMode=false;commit()}
  if(a==="start-task")updateRun(r=>startTask(r,t.dataset.taskId));if(a==="toggle-check")updateRun(r=>toggleChecklist(r,t.dataset.taskId,t.dataset.itemId,auth.user));if(a==="complete-task")updateRun(r=>completeTask(r,t.dataset.taskId));
- if(a==="toggle-subtask")updateRun(r=>toggleSubtask(r,t.dataset.taskId,t.dataset.itemId));
+ if(a==="toggle-subtask")updateRun(r=>toggleSubtask(r,t.dataset.taskId,t.dataset.itemId,auth.user));
 }catch(err){toast(err.message,"error")}});
 root.addEventListener("change",e=>{const a=e.target.dataset.action;if(a==="select-workflow"){state.selectedWorkflowId=e.target.value;ui.selectedTaskId=null;ui.selectedConnection=null;commit()}if(a==="select-run"){state.selectedInstanceId=e.target.value;ui.selectedTaskId=null;ui.selectedConnection=null;ui.editingTaskId=null;ui.runEditMode=false;commit()}});
 root.addEventListener("change",async e=>{const input=e.target.closest("[data-workflow-import]");if(!input?.files?.[0])return;try{const workflow=parseWorkflow(await input.files[0].text()),errors=validateWorkflow(workflow);if(errors.length)throw Error(errors[0]);state.workflows.push(workflow);state.selectedWorkflowId=workflow.id;ui.selectedTaskId=workflow.tasks[0]?.id||null;ui.selectedConnection=null;commit();setTimeout(()=>toast("Workflow JSON을 가져왔습니다.","success"),0)}catch(error){toast(error.message,"error")}finally{input.value=""}});

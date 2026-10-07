@@ -42,6 +42,35 @@ class LoginAndLegacyTests(unittest.TestCase):
         self.assertTrue(check['checkedAt'])
         self.assertEqual(self.client.get('/data/flowline.db').status_code, 404)
 
+    def test_local_identity_and_subtask_audit(self):
+        self.assertEqual(self.client.post('/api/auth/name', json={'name': '  '}).status_code, 400)
+        self.assertEqual(self.client.post('/api/auth/name', json={'name': '김사용'}).status_code, 200)
+        state = copy.deepcopy(self.state)
+        task = state['instances'][0]['tasks'][0]
+        task['subtasks'] = [{'itemId': 's', 'completed': True, 'checkedBy': 'forged'}]
+        task['checklist'].append({'itemId': 'n', 'checked': True})
+        response = self.client.put('/api/state', json={'state': state})
+        self.assertEqual(response.status_code, 200)
+        saved = response.json['state']
+        for collection in ('subtasks', 'checklist'):
+            record = saved['instances'][0]['tasks'][0][collection][-1]
+            self.assertEqual(record['checkedBy'], '김사용')
+            self.assertTrue(record['checkedAt'])
+        self.client.post('/api/auth/name', json={'name': '다른사람'})
+        again = self.client.put('/api/state', json={'state': saved}).json['state']
+        self.assertEqual(again, saved)
+        task = again['instances'][0]['tasks'][0]
+        task['subtasks'][0]['completed'] = False
+        cleared = self.client.put('/api/state', json={'state': again}).json['state']
+        self.assertIsNone(cleared['instances'][0]['tasks'][0]['subtasks'][0]['checkedBy'])
+
+    def test_gitlab_precedence_and_origin(self):
+        with self.client.session_transaction() as session:
+            session['user'] = {'id': 42, 'name': 'GitLab 사용자', 'username': 'tester'}
+        response = self.client.post('/api/auth/name', json={'name': '로컬 이름'})
+        self.assertEqual(response.json['user']['id'], 42)
+        self.assertEqual(self.client.post('/api/auth/name', json={'name': '외부'}, headers={'Origin': 'https://other.example'}).status_code, 403)
+
     def test_oauth_state_and_callback(self):
         env={'GITLAB_URL': 'https://gitlab.example', 'GITLAB_CLIENT_ID':'id', 'GITLAB_CLIENT_SECRET':'secret'}
         with patch.dict(os.environ, env):

@@ -6,6 +6,7 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const modules = [
   "utils/id",
   "utils/html",
+  "utils/scrollPosition",
   "data/seed",
   "domain/workflowModel",
   "domain/workflowEngine",
@@ -31,7 +32,13 @@ function compileModule(moduleName) {
 
   source = source.replace(
     /import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["'];?/g,
-    (_, names, specifier) => `const { ${names.trim()} } = __flowlineModules["${resolveImport(moduleName, specifier)}"];`,
+    (_, names, specifier) => {
+      const dependency = resolveImport(moduleName, specifier);
+      if (!modules.includes(dependency) || modules.indexOf(dependency) >= modules.indexOf(moduleName)) {
+        throw new Error(`${moduleName}: dependency ${dependency} is missing or must be bundled earlier`);
+      }
+      return `const { ${names.trim()} } = __flowlineModules["${dependency}"];`;
+    },
   );
   source = source.replace(/export\s+(const|function|class)\s+([A-Za-z_$][\w$]*)/g, (_, kind, name) => {
     exports.push(name);

@@ -30,7 +30,22 @@ def gitlab_config():
 @app.get("/api/auth")
 def auth_status():
     base, client, secret, _ = gitlab_config()
-    return jsonify({"configured": bool(base and client and secret), "user": session.get("user")})
+    return jsonify({"configured": bool(base and client and secret), "user": current_identity()})
+
+
+def current_identity():
+    return session.get("user") or session.get("display_user")
+
+
+@app.post("/api/auth/name")
+def set_display_name():
+    if request.headers.get("Origin") and request.headers["Origin"] != request.host_url.rstrip("/"):
+        return jsonify({"error": "다른 사이트의 요청은 허용되지 않습니다."}), 403
+    name = (request.get_json(silent=True) or {}).get("name")
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
+        return jsonify({"error": "이름을 1~80자로 입력해 주세요."}), 400
+    session["display_user"] = {"id": None, "username": "", "name": name.strip(), "provider": "local"}
+    return jsonify({"user": current_identity()})
 
 
 @app.get("/auth/gitlab")
@@ -79,21 +94,26 @@ def stamp_checks(state, previous):
     for run in state.get("instances", []):
         old_tasks = {task.get("taskId"): task for task in old_runs.get(run.get("id"), {}).get("tasks", [])}
         for task in run.get("tasks", []):
-            old_checks = {item.get("itemId"): item for item in old_tasks.get(task.get("taskId"), {}).get("checklist", [])}
-            for check in task.get("checklist", []):
-                old = old_checks.get(check.get("itemId"), {})
-                if check.get("checked") and not old.get("checked"):
-                    user = session.get("user")
-                    if not user:
-                        raise PermissionError("チェックするにはGitLabにログインしてください。")
-                    check.update(checkedBy=user["name"], checkedUserId=user["id"],
-                        checkedUsername=user["username"], checkedAt=datetime.now(timezone.utc).isoformat())
-                elif check.get("checked"):
-                    for key in ("checkedBy", "checkedUserId", "checkedUsername", "checkedAt"):
-                        check[key] = old.get(key)
-                else:
-                    for key in ("checkedBy", "checkedUserId", "checkedUsername", "checkedAt"):
-                        check[key] = None
+            for collection, flag in (("checklist", "checked"), ("subtasks", "completed")):
+                stamp_items(task.get(collection, []), old_tasks.get(task.get("taskId"), {}).get(collection, []), flag)
+
+
+def stamp_items(items, previous, flag):
+    old_checks = {item.get("itemId"): item for item in previous}
+    for check in items:
+        old = old_checks.get(check.get("itemId"), {})
+        if check.get(flag) and not old.get(flag):
+            user = current_identity()
+            if not user:
+                raise PermissionError("체크하려면 먼저 사용자 이름을 입력해 주세요.")
+            check.update(checkedBy=user["name"], checkedUserId=user["id"],
+                checkedUsername=user["username"], checkedAt=datetime.now(timezone.utc).isoformat())
+        elif check.get(flag):
+            for key in ("checkedBy", "checkedUserId", "checkedUsername", "checkedAt"):
+                check[key] = old.get(key)
+        else:
+            for key in ("checkedBy", "checkedUserId", "checkedUsername", "checkedAt"):
+                check[key] = None
 
 
 @app.after_request
