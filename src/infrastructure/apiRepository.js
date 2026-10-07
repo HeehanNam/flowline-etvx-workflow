@@ -31,11 +31,9 @@ export class ApiRepository {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ state: snapshot })
       });
-      if (!response.ok) throw new Error("Workflow 저장에 실패했습니다.");
+      if (!response.ok) { const error = await response.json(); throw new Error(error.error || "Workflow 저장에 실패했습니다."); }
     }).catch(error => {
-      this.mode = "local";
-      this.saveLocal(snapshot);
-      console.warn("서버 저장에 실패해 브라우저 저장소로 전환했습니다.", error);
+      window.alert(error.message + " 변경사항이 서버에 저장되지 않았습니다. 로그인 후 새로고침해 주세요.");
     });
     return this.pending;
   }

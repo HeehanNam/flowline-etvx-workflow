@@ -26,11 +26,14 @@ export function startTask(instance, taskId) {
   task.status = "in_progress"; task.startedAt = now(); next.updatedAt = now();
   next.history.unshift(event("task_started", `“${getTaskDefinition(next, taskId).title}” 업무를 시작했습니다.`)); return next;
 }
-export function toggleChecklist(instance, taskId, itemId) {
+export function toggleChecklist(instance, taskId, itemId, actor) {
   const next = structuredClone(instance), task = next.tasks.find(t => t.taskId === taskId);
   if (!task || !["ready", "in_progress"].includes(task.status)) throw new Error("현재 체크할 수 없는 Task입니다.");
   if (task.status === "ready") { task.status = "in_progress"; task.startedAt = now(); }
-  const check = task.checklist.find(c => c.itemId === itemId); check.checked = !check.checked; next.updatedAt = now(); return next;
+  const check = task.checklist.find(c => c.itemId === itemId);
+  if (!actor) throw new Error("GitLab에 로그인해 주세요.");
+  check.checked = !check.checked; check.checkedBy = check.checked ? actor.name : null; check.checkedUserId = check.checked ? actor.id : null; check.checkedAt = check.checked ? now() : null; next.updatedAt = now();
+  next.history.unshift(event("checklist_changed", actor.name + " · 체크리스트 " + (check.checked ? "체크" : "해제"))); return next;
 }
 export function toggleSubtask(instance, taskId, itemId) {
   const next = structuredClone(instance), task = next.tasks.find(t => t.taskId === taskId);
@@ -76,7 +79,7 @@ export function resetTask(instance, taskId, scope = "task") {
   const next = structuredClone(instance);
   const targetIds = scope === "downstream" ? connectedTaskIds(next, taskId) : new Set([taskId]);
   next.tasks.filter(task => targetIds.has(task.taskId)).forEach(task => {
-    task.checklist.forEach(item => { item.checked = false; });
+    task.checklist.forEach(item => { item.checked = false; item.checkedBy = null; item.checkedAt = null; item.checkedUserId = null; });
     task.subtasks.forEach(item => { item.completed = false; });
     task.startedAt = null;
     task.completedAt = null;
@@ -102,9 +105,9 @@ export function reconcileInstanceStructure(instance, message = "실행 중 Workf
     const current = previous.get(definition.id);
     const task = current || { taskId: definition.id, status: "blocked", startedAt: null, completedAt: null, subtasks: [], checklist: [] };
     const subtaskState = new Map((task.subtasks || []).map(item => [item.itemId, item.completed]));
-    const checklistState = new Map((task.checklist || []).map(item => [item.itemId, item.checked]));
+    const checklistState = new Map((task.checklist || []).map(item => [item.itemId, item]));
     task.subtasks = definition.subtasks.map(item => ({ itemId: item.id, completed: subtaskState.get(item.id) || false }));
-    task.checklist = definition.checklist.map(item => ({ itemId: item.id, checked: checklistState.get(item.id) || false }));
+    task.checklist = definition.checklist.map(item => ({ ...checklistState.get(item.id), itemId: item.id, checked: checklistState.get(item.id)?.checked || false }));
     return task;
   });
   next.tasks.forEach(task => {

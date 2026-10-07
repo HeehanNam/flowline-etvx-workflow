@@ -22,6 +22,9 @@ export function createTask(input = {}) {
     entry: input.entry && input.entry.trim() || "선행 업무 완료",
     instructions: input.instructions && input.instructions.trim() || "",
     exit: input.exit && input.exit.trim() || "필수 체크리스트 완료",
+    plannedStart: input.plannedStart || "",
+    plannedEnd: input.plannedEnd || "",
+    memo: input.memo || "",
     priority: input.priority || "medium",
     dependencies: input.dependencies || [],
     position: input.position || null,
@@ -49,6 +52,7 @@ export function normalizeState(state) {
     };
     workflow.tasks.forEach(levelOf);
     workflow.tasks.forEach((task, index) => {
+    task.plannedStart ||= ""; task.plannedEnd ||= ""; task.memo ||= "";
     if (!task.priority) task.priority = "medium";
     if (!task.subtasks) task.subtasks = [];
     if (!Array.isArray(task.dependencies)) task.dependencies = index ? [workflow.tasks[index - 1].id] : [];
@@ -60,7 +64,8 @@ export function normalizeState(state) {
   });});
   state.instances.forEach(instance => {
     instance.definitionSnapshot.tasks.forEach((task, index) => {
-      if (!task.priority) task.priority = "medium";
+      task.plannedStart ||= ""; task.plannedEnd ||= ""; task.memo ||= "";
+    if (!task.priority) task.priority = "medium";
       if (!task.subtasks) task.subtasks = [];
       if (!task.position) task.position = { x: 80 + index * 320, y: 90 };
       if (!Array.isArray(task.dependencies)) task.dependencies = index ? [instance.definitionSnapshot.tasks[index - 1].id] : [];
