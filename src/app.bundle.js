@@ -31,12 +31,25 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function linkedText(value = "") {
+  const text = String(value);
+  const pattern = /https?:\/\/[^\s<>"']+/gi;
+  let result = "", offset = 0;
+  for (const match of text.matchAll(pattern)) {
+    const url = match[0].replace(/[.,;!?，。]+$/, "");
+    result += escapeHtml(text.slice(offset, match.index));
+    result += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+    offset = match.index + url.length;
+  }
+  return (result + escapeHtml(text.slice(offset))).replace(/\r?\n/g, "<br>");
+}
+
 function taskSchedule(task) {
  const short = value => { const parts=value.split("-"); return parts.length===3 ? Number(parts[1])+"/"+Number(parts[2]) : value; };
  return task.plannedStart || task.plannedEnd ? " ("+short(task.plannedStart || "미정")+"~"+short(task.plannedEnd || "미정")+")" : "";
 }
 
-__flowlineModules["utils/html"] = { escapeHtml, formatDate, taskSchedule };
+__flowlineModules["utils/html"] = { escapeHtml, formatDate, linkedText, taskSchedule };
 })();
 
 // data/seed.js
@@ -535,7 +548,7 @@ function renderWorkflowEditor(state,ui){
 }
 
 function workflowForm(w){return `<div class="panel-title"><span class="eyebrow">WORKFLOW INFO</span><h3>기본 정보</h3></div><form data-form="workflow" data-workflow-id="${w.id}"><label>이름<input name="name" value="${escapeHtml(w.name)}" required></label><label>설명<textarea name="description">${escapeHtml(w.description)}</textarea></label><label>Owner<input name="owner" value="${escapeHtml(w.owner)}"></label><button class="primary full">저장</button></form>`;}
-function itemsEditor(items,t,kind,scope){const sub=kind==="subtask";return `<div class="check-editor">${items.map(i=>`<div><input name="${sub?"subtask_text":"check_text"}_${i.id}" value="${escapeHtml(sub?i.title:i.text)}"><label class="mini-check"><input type="checkbox" name="${sub?"subtask_required":"check_required"}_${i.id}" ${i.required?"checked":""}>필수</label><button type="button" data-action="delete-${kind}" data-scope="${scope}" data-task-id="${t.id}" data-item-id="${i.id}">×</button></div>`).join("")}<button type="button" class="text-button" data-action="add-${kind}" data-scope="${scope}" data-task-id="${t.id}">+ ${sub?"Subtask":"체크 항목"}</button></div>`;}
+function itemsEditor(items,t,kind,scope){const sub=kind==="subtask";return `<div class="check-editor">${items.map(i=>`<div data-sort-row data-item-id="${i.id}" data-task-id="${t.id}" data-kind="${kind}" data-scope="${scope}"><span class="item-drag-handle" draggable="true" title="드래그하여 순서 변경" aria-label="드래그하여 순서 변경">⠿</span><input name="${sub?"subtask_text":"check_text"}_${i.id}" value="${escapeHtml(sub?i.title:i.text)}"><label class="mini-check"><input type="checkbox" name="${sub?"subtask_required":"check_required"}_${i.id}" ${i.required?"checked":""}>필수</label><button type="button" data-action="delete-${kind}" data-scope="${scope}" data-task-id="${t.id}" data-item-id="${i.id}">×</button></div>`).join("")}<button type="button" class="text-button" data-action="add-${kind}" data-scope="${scope}" data-task-id="${t.id}">+ ${sub?"Subtask":"체크 항목"}</button></div>`;}
 
 function taskForm(t,wf,modal=false,scope="definition"){const others=wf.tasks.filter(x=>t.dependencies.includes(x.id)),run=scope==="run";return `<div class="panel-title"><div><span class="eyebrow">${run?"RUN WORKFLOW":"ETVX TASK"}</span><h3>${escapeHtml(t.title)}${escapeHtml(taskSchedule(t))}</h3></div><div class="panel-actions">${modal?`<button class="icon-button" data-action="close-task-settings" type="button">×</button>`:""}<button class="icon-button danger" data-action="delete-task" data-scope="${scope}" data-task-id="${t.id}" type="button">⌫</button></div></div>${run?`<p class="run-edit-notice">이 변경은 현재 실행 건에만 반영되며 원본 Workflow 정의는 유지됩니다.</p>`:""}<form data-form="task" data-scope="${scope}" data-task-id="${t.id}"><label>Task 이름<input name="title" value="${escapeHtml(t.title)}" required></label><div class="field-row"><label>담당자 / 역할<input name="assignee" value="${escapeHtml(t.assignee)}"></label><label>우선순위<select name="priority"><option value="low" ${t.priority==="low"?"selected":""}>낮음</option><option value="medium" ${t.priority==="medium"?"selected":""}>보통</option><option value="high" ${t.priority==="high"?"selected":""}>높음</option><option value="critical" ${t.priority==="critical"?"selected":""}>긴급</option></select></label></div><div class="field-row schedule-fields"><label>예정 시작일<input type="date" name="plannedStart" value="${escapeHtml(t.plannedStart || "")}"></label><label>예정 종료일<input type="date" name="plannedEnd" value="${escapeHtml(t.plannedEnd || "")}"></label></div><label>Task 메모<textarea name="memo">${escapeHtml(t.memo || "")}</textarea></label><fieldset class="dependency-editor"><legend>선행 Task · 모두 완료되면 실행</legend>${others.length?others.map(x=>`<label><input type="checkbox" name="dependencies" value="${x.id}" ${t.dependencies.includes(x.id)?"checked":""}>${escapeHtml(x.title)}</label>`).join(""):`<small>연결된 선행 Task가 없습니다.</small>`}<p>체크를 해제하면 선행 연결이 제거됩니다. 새 연결은 캔버스에서 추가하세요.</p></fieldset><label class="etvx"><b>E</b><span>Entry · 진입 기준</span><textarea name="entry">${escapeHtml(t.entry)}</textarea></label><label class="etvx"><b>T</b><span>Task · 수행 내용</span><textarea name="instructions">${escapeHtml(t.instructions)}</textarea></label><div class="etvx subtask-section"><b>S</b><span>Subtask · 세부 수행 업무</span>${itemsEditor(t.subtasks,t,"subtask",scope)}</div><div class="etvx"><b>V</b><span>Validation · 체크리스트</span>${itemsEditor(t.checklist,t,"check",scope)}</div><label class="etvx"><b>X</b><span>Exit · 완료 기준</span><textarea name="exit">${escapeHtml(t.exit)}</textarea></label><button class="primary full">${run?"현재 실행 건에 반영":"변경사항 저장"}</button></form>`;}
 
@@ -544,7 +557,7 @@ __flowlineModules["components/workflowEditor"] = { renderWorkflowEditor, taskFor
 
 // components/runView.js
 (function () {
-const { escapeHtml, formatDate, taskSchedule } = __flowlineModules["utils/html"];
+const { escapeHtml, formatDate, taskSchedule, linkedText } = __flowlineModules["utils/html"];
 const { progressOf, requiredChecksComplete } = __flowlineModules["domain/workflowEngine"];
 const { workflowMap } = __flowlineModules["components/workflowMap"];
 const { taskForm } = __flowlineModules["components/workflowEditor"];
@@ -568,7 +581,7 @@ function templateDialog(run){return `<div class="modal-backdrop" data-action="cl
 function runtime(task,runtimeTask,run,editing=false){
  const allowed=requiredChecksComplete(run,task.id),disabled=["blocked","completed"].includes(runtimeTask.status);
  const hasProgress=runtimeTask.startedAt||runtimeTask.completedAt||runtimeTask.checklist.some(item=>item.checked)||runtimeTask.subtasks.some(item=>item.completed);
- return `<div class="panel-title"><div><span class="status-pill ${runtimeTask.status}">${labels[runtimeTask.status]}</span><h3>${escapeHtml(task.title)}${escapeHtml(taskSchedule(task))}</h3><p class="owner">담당 · ${escapeHtml(task.assignee)} · 우선순위 ${task.priority}</p></div></div>${editing?`<button class="primary full run-task-edit" data-action="open-task-settings" data-task-id="${task.id}">이 실행 건의 Task 설정</button>`:""}${criteria("E","진입 기준",task.entry)}${criteria("T","수행 내용",task.instructions||"등록된 수행 지침이 없습니다.")}${task.subtasks.length?`<div class="runtime-checks subtasks"><div class="criteria-head"><b>S</b><div><span>Subtask</span><small>${runtimeTask.subtasks.filter(item=>item.completed).length}/${runtimeTask.subtasks.length} 완료</small></div></div>${task.subtasks.map(item=>{const done=runtimeTask.subtasks.find(value=>value.itemId===item.id)?.completed;return `<label class="runtime-check ${disabled?"disabled":""}"><input type="checkbox" data-action="toggle-subtask" data-task-id="${task.id}" data-item-id="${item.id}" ${done?"checked":""} ${disabled?"disabled":""}><span>${escapeHtml(item.title)}</span>${item.required?"<em>필수</em>":""}</label>`;}).join("")}</div>`:""}<div class="runtime-checks"><div class="criteria-head"><b>V</b><div><span>완료 체크리스트</span><small>${runtimeTask.checklist.filter(item=>item.checked).length}/${runtimeTask.checklist.length} 완료</small></div></div>${task.checklist.map(item=>{const record=runtimeTask.checklist.find(value=>value.itemId===item.id),checked=record?.checked;return `<label class="runtime-check ${disabled?"disabled":""}"><input type="checkbox" data-action="toggle-check" data-task-id="${task.id}" data-item-id="${item.id}" ${checked?"checked":""} ${disabled?"disabled":""}><span>${escapeHtml(item.text)}${checked ? `<small class="check-audit">${escapeHtml(record.checkedBy || "기록 없음")} · ${record.checkedAt ? escapeHtml(formatDate(record.checkedAt)) : "시각 기록 없음"}</small>` : ""}</span>${item.required?"<em>필수</em>":""}</label>`;}).join("")}</div>${criteria("X","완료 기준",task.exit)}<form data-form="task-memo" data-task-id="${task.id}"><label>Task 메모<textarea name="memo">${escapeHtml(task.memo || "")}</textarea></label><button class="secondary" type="submit">메모 저장</button></form>${editing?"":runtimeTask.status==="ready"?`<button class="primary full" data-action="start-task" data-task-id="${task.id}">업무 시작</button>`:""}${editing?"":runtimeTask.status==="in_progress"?`<button class="primary full" data-action="complete-task" data-task-id="${task.id}" ${allowed?"":"disabled"}>${allowed?"Task 완료":"필수 Subtask와 체크리스트를 완료해 주세요"}</button>`:""}${editing?"":runtimeTask.status==="blocked"?`<div class="blocked-note">선행 Task가 모두 완료되면 자동으로 열립니다.</div>`:""}${editing?"":runtimeTask.status==="completed"?`<div class="completed-note">✓ ${formatDate(runtimeTask.completedAt)} 완료</div>`:""}${editing?"":hasProgress?`<button class="reset-button full" data-action="open-reset-dialog" data-task-id="${task.id}">↺ Task 재수행 · Reset</button>`:""}`;
+ return `<div class="panel-title"><div><span class="status-pill ${runtimeTask.status}">${labels[runtimeTask.status]}</span><h3>${escapeHtml(task.title)}${escapeHtml(taskSchedule(task))}</h3><p class="owner">담당 · ${escapeHtml(task.assignee)} · 우선순위 ${task.priority}</p></div></div>${editing?`<button class="primary full run-task-edit" data-action="open-task-settings" data-task-id="${task.id}">이 실행 건의 Task 설정</button>`:""}${criteria("E","진입 기준",task.entry)}${criteria("T","수행 내용",task.instructions||"등록된 수행 지침이 없습니다.")}${task.subtasks.length?`<div class="runtime-checks subtasks"><div class="criteria-head"><b>S</b><div><span>Subtask</span><small>${runtimeTask.subtasks.filter(item=>item.completed).length}/${runtimeTask.subtasks.length} 완료</small></div></div>${task.subtasks.map(item=>{const done=runtimeTask.subtasks.find(value=>value.itemId===item.id)?.completed;return `<label class="runtime-check ${disabled?"disabled":""}"><input type="checkbox" data-action="toggle-subtask" data-task-id="${task.id}" data-item-id="${item.id}" ${done?"checked":""} ${disabled?"disabled":""}><span>${escapeHtml(item.title)}</span>${item.required?"<em>필수</em>":""}</label>`;}).join("")}</div>`:""}<div class="runtime-checks"><div class="criteria-head"><b>V</b><div><span>완료 체크리스트</span><small>${runtimeTask.checklist.filter(item=>item.checked).length}/${runtimeTask.checklist.length} 완료</small></div></div>${task.checklist.map(item=>{const record=runtimeTask.checklist.find(value=>value.itemId===item.id),checked=record?.checked;return `<label class="runtime-check ${disabled?"disabled":""}"><input type="checkbox" data-action="toggle-check" data-task-id="${task.id}" data-item-id="${item.id}" ${checked?"checked":""} ${disabled?"disabled":""}><span>${escapeHtml(item.text)}${checked ? `<small class="check-audit">${escapeHtml(record.checkedBy || "기록 없음")} · ${record.checkedAt ? escapeHtml(formatDate(record.checkedAt)) : "시각 기록 없음"}</small>` : ""}</span>${item.required?"<em>필수</em>":""}</label>`;}).join("")}</div>${criteria("X","완료 기준",task.exit)}<div class="task-memo-preview"><span>메모 링크</span><p>${linkedText(task.memo || "")}</p></div><form data-form="task-memo" data-task-id="${task.id}"><label>Task 메모<textarea name="memo">${escapeHtml(task.memo || "")}</textarea></label><button class="secondary" type="submit">메모 저장</button></form>${editing?"":runtimeTask.status==="ready"?`<button class="primary full" data-action="start-task" data-task-id="${task.id}">업무 시작</button>`:""}${editing?"":runtimeTask.status==="in_progress"?`<button class="primary full" data-action="complete-task" data-task-id="${task.id}" ${allowed?"":"disabled"}>${allowed?"Task 완료":"필수 Subtask와 체크리스트를 완료해 주세요"}</button>`:""}${editing?"":runtimeTask.status==="blocked"?`<div class="blocked-note">선행 Task가 모두 완료되면 자동으로 열립니다.</div>`:""}${editing?"":runtimeTask.status==="completed"?`<div class="completed-note">✓ ${formatDate(runtimeTask.completedAt)} 완료</div>`:""}${editing?"":hasProgress?`<button class="reset-button full" data-action="open-reset-dialog" data-task-id="${task.id}">↺ Task 재수행 · Reset</button>`:""}`;
 }
 
 function resetDialog(task,workflow){
@@ -577,7 +590,7 @@ function resetDialog(task,workflow){
 }
 
 function connectedCount(taskId,workflow){const ids=new Set([taskId]);let changed=true;while(changed){changed=false;workflow.tasks.forEach(task=>{if(!ids.has(task.id)&&task.dependencies.some(id=>ids.has(id))){ids.add(task.id);changed=true;}});}return ids.size;}
-const criteria=(letter,title,text)=>`<div class="criteria"><b>${letter}</b><div><span>${title}</span><p>${escapeHtml(text)}</p></div></div>`;
+const criteria=(letter,title,text)=>`<div class="criteria"><b>${letter}</b><div><span>${title}</span><p>${linkedText(text)}</p></div></div>`;
 
 __flowlineModules["components/runView"] = { renderRuns };
 })();
@@ -587,7 +600,35 @@ __flowlineModules["components/runView"] = { renderRuns };
 const { seedState } = __flowlineModules["data/seed"];const { ApiRepository } = __flowlineModules["infrastructure/apiRepository"];const { createChecklistItem,createSubtask,createTask,createWorkflow,normalizeState,validateWorkflow } = __flowlineModules["domain/workflowModel"];const { completeTask,reconcileInstanceStructure,resetTask,startInstance,startTask,toggleChecklist,toggleSubtask } = __flowlineModules["domain/workflowEngine"];const { buildRunReport,cloneWorkflowAsTemplate,downloadText,parseWorkflow,safeFilename,serializeWorkflow } = __flowlineModules["services/workflowTransfer"];const { pathBetweenPoints,pathData,previewPath } = __flowlineModules["components/workflowMap"];const { renderLayout } = __flowlineModules["components/layout"];const { renderDashboard } = __flowlineModules["components/dashboard"];const { renderWorkflowEditor } = __flowlineModules["components/workflowEditor"];const { renderRuns } = __flowlineModules["components/runView"];
 window.FlowlineCompatibility.markModuleLoaded();const repo=new ApiRepository(seedState);const root=document.querySelector("#app");window.FlowlineCompatibility.showStartupLoading();
 Promise.all([repo.load(),fetch("/api/auth").then(r=>r.ok?r.json():{configured:false,user:null}).catch(()=>({configured:false,user:null}))]).then(([loadedState,auth])=>{let state=normalizeState(loadedState),ui={selectedTaskId:null,selectedConnection:null,editingTaskId:null,resetTaskId:null,templateRunId:null,runEditMode:false,drag:null,expandedTaskIds:[],mapZoom:.85};repo.save(state);
-function render(){const content=state.activeView==="dashboard"?renderDashboard(state):state.activeView==="workflows"?renderWorkflowEditor(state,ui):renderRuns(state,ui);root.innerHTML=renderLayout(state,content)+`<div class="login-status">${auth.user ? `${auth.user.name.replace(/[<>&"]/g, "")} (@${auth.user.username.replace(/[<>&"]/g, "")}) <form method="post" action="/auth/logout"><button>로그아웃</button></form>` : auth.configured ? `<a href="/auth/gitlab">GitLab 로그인</a>` : "GitLab 로그인 설정 필요"}</div>`}
+function render(){const oldModal=root.querySelector(".task-modal"),oldForm=oldModal?.querySelector("form[data-form=task]"),scroll=oldModal?{top:oldModal.scrollTop,left:oldModal.scrollLeft,id:oldForm?.dataset.taskId,scope:oldForm?.dataset.scope}:null;const content=state.activeView==="dashboard"?renderDashboard(state):state.activeView==="workflows"?renderWorkflowEditor(state,ui):renderRuns(state,ui);root.innerHTML=renderLayout(state,content)+`<div class="login-status">${auth.user ? `${auth.user.name.replace(/[<>&"]/g, "")} (@${auth.user.username.replace(/[<>&"]/g, "")}) <form method="post" action="/auth/logout"><button>로그아웃</button></form>` : auth.configured ? `<a href="/auth/gitlab">GitLab 로그인</a>` : "GitLab 로그인 설정 필요"}</div>`;const modal=root.querySelector(".task-modal"),form=modal?.querySelector("form[data-form=task]");if(scroll&&modal&&form&&scroll.id===form.dataset.taskId&&scroll.scope===form.dataset.scope){modal.scrollTop=scroll.top;modal.scrollLeft=scroll.left;}}
+let itemDrag = null;
+root.addEventListener("dragstart", e => {
+ const handle=e.target.closest(".item-drag-handle");if(!handle)return;
+ const row=handle.closest("[data-sort-row]");itemDrag={...row.dataset};
+ e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",row.dataset.itemId);
+ row.classList.add("item-dragging");
+});
+root.addEventListener("dragover", e => {
+ const row=e.target.closest("[data-sort-row]");
+ if(!row||!itemDrag||row.dataset.taskId!==itemDrag.taskId||row.dataset.kind!==itemDrag.kind||row.dataset.scope!==itemDrag.scope)return;
+ e.preventDefault();e.dataTransfer.dropEffect="move";
+ root.querySelectorAll(".item-drop-target").forEach(x=>x.classList.remove("item-drop-target"));row.classList.add("item-drop-target");
+});
+root.addEventListener("drop", e => {
+ const row=e.target.closest("[data-sort-row]"),drag=itemDrag;
+ if(!row||!drag||row.dataset.taskId!==drag.taskId||row.dataset.kind!==drag.kind||row.dataset.scope!==drag.scope)return;
+ e.preventDefault();itemDrag=null;
+ if(row.dataset.itemId===drag.itemId){row.classList.remove("item-drop-target","item-dragging");return;}
+ try {
+  syncOpenTaskForm();const task=taskForScope(drag.scope,drag.taskId),items=drag.kind==="subtask"?task.subtasks:task.checklist;
+  const from=items.findIndex(x=>x.id===drag.itemId);if(from<0)return;
+  const to=items.findIndex(x=>x.id===row.dataset.itemId);if(to<0)return;
+  const [item]=items.splice(from,1);items.splice(to,0,item);
+  if(drag.scope==="run")reconcileSelectedRun(`“${task.title}”의 ${drag.kind==="subtask"?"Subtask":"체크리스트"} 순서를 변경했습니다.`);
+  commit();
+ } catch(error){toast(error.message,"error");}
+});
+root.addEventListener("dragend",()=>{itemDrag=null;root.querySelectorAll(".item-drop-target,.item-dragging").forEach(x=>x.classList.remove("item-drop-target","item-dragging"));});
 function commit(){repo.save(state);render()}function toast(msg,kind="info"){const e=document.querySelector("#toast");e.textContent=msg;e.className=`toast show ${kind}`;setTimeout(()=>e.className="toast",2500)}
 root.addEventListener("click",e=>{const t=e.target.closest("[data-action]");if(!t)return;const a=t.dataset.action;try{
  if(a==="modal-panel")return

@@ -1,7 +1,35 @@
 import{seedState}from"./data/seed.js";import{ApiRepository}from"./infrastructure/apiRepository.js";import{createChecklistItem,createSubtask,createTask,createWorkflow,normalizeState,validateWorkflow}from"./domain/workflowModel.js";import{completeTask,reconcileInstanceStructure,resetTask,startInstance,startTask,toggleChecklist,toggleSubtask}from"./domain/workflowEngine.js";import{buildRunReport,cloneWorkflowAsTemplate,downloadText,parseWorkflow,safeFilename,serializeWorkflow}from"./services/workflowTransfer.js";import{pathBetweenPoints,pathData,previewPath}from"./components/workflowMap.js";import{renderLayout}from"./components/layout.js";import{renderDashboard}from"./components/dashboard.js";import{renderWorkflowEditor}from"./components/workflowEditor.js";import{renderRuns}from"./components/runView.js";
 window.FlowlineCompatibility.markModuleLoaded();const repo=new ApiRepository(seedState);const root=document.querySelector("#app");window.FlowlineCompatibility.showStartupLoading();
 Promise.all([repo.load(),fetch("/api/auth").then(r=>r.ok?r.json():{configured:false,user:null}).catch(()=>({configured:false,user:null}))]).then(([loadedState,auth])=>{let state=normalizeState(loadedState),ui={selectedTaskId:null,selectedConnection:null,editingTaskId:null,resetTaskId:null,templateRunId:null,runEditMode:false,drag:null,expandedTaskIds:[],mapZoom:.85};repo.save(state);
-function render(){const content=state.activeView==="dashboard"?renderDashboard(state):state.activeView==="workflows"?renderWorkflowEditor(state,ui):renderRuns(state,ui);root.innerHTML=renderLayout(state,content)+`<div class="login-status">${auth.user ? `${auth.user.name.replace(/[<>&"]/g, "")} (@${auth.user.username.replace(/[<>&"]/g, "")}) <form method="post" action="/auth/logout"><button>로그아웃</button></form>` : auth.configured ? `<a href="/auth/gitlab">GitLab 로그인</a>` : "GitLab 로그인 설정 필요"}</div>`}
+function render(){const oldModal=root.querySelector(".task-modal"),oldForm=oldModal?.querySelector("form[data-form=task]"),scroll=oldModal?{top:oldModal.scrollTop,left:oldModal.scrollLeft,id:oldForm?.dataset.taskId,scope:oldForm?.dataset.scope}:null;const content=state.activeView==="dashboard"?renderDashboard(state):state.activeView==="workflows"?renderWorkflowEditor(state,ui):renderRuns(state,ui);root.innerHTML=renderLayout(state,content)+`<div class="login-status">${auth.user ? `${auth.user.name.replace(/[<>&"]/g, "")} (@${auth.user.username.replace(/[<>&"]/g, "")}) <form method="post" action="/auth/logout"><button>로그아웃</button></form>` : auth.configured ? `<a href="/auth/gitlab">GitLab 로그인</a>` : "GitLab 로그인 설정 필요"}</div>`;const modal=root.querySelector(".task-modal"),form=modal?.querySelector("form[data-form=task]");if(scroll&&modal&&form&&scroll.id===form.dataset.taskId&&scroll.scope===form.dataset.scope){modal.scrollTop=scroll.top;modal.scrollLeft=scroll.left;}}
+let itemDrag = null;
+root.addEventListener("dragstart", e => {
+ const handle=e.target.closest(".item-drag-handle");if(!handle)return;
+ const row=handle.closest("[data-sort-row]");itemDrag={...row.dataset};
+ e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",row.dataset.itemId);
+ row.classList.add("item-dragging");
+});
+root.addEventListener("dragover", e => {
+ const row=e.target.closest("[data-sort-row]");
+ if(!row||!itemDrag||row.dataset.taskId!==itemDrag.taskId||row.dataset.kind!==itemDrag.kind||row.dataset.scope!==itemDrag.scope)return;
+ e.preventDefault();e.dataTransfer.dropEffect="move";
+ root.querySelectorAll(".item-drop-target").forEach(x=>x.classList.remove("item-drop-target"));row.classList.add("item-drop-target");
+});
+root.addEventListener("drop", e => {
+ const row=e.target.closest("[data-sort-row]"),drag=itemDrag;
+ if(!row||!drag||row.dataset.taskId!==drag.taskId||row.dataset.kind!==drag.kind||row.dataset.scope!==drag.scope)return;
+ e.preventDefault();itemDrag=null;
+ if(row.dataset.itemId===drag.itemId){row.classList.remove("item-drop-target","item-dragging");return;}
+ try {
+  syncOpenTaskForm();const task=taskForScope(drag.scope,drag.taskId),items=drag.kind==="subtask"?task.subtasks:task.checklist;
+  const from=items.findIndex(x=>x.id===drag.itemId);if(from<0)return;
+  const to=items.findIndex(x=>x.id===row.dataset.itemId);if(to<0)return;
+  const [item]=items.splice(from,1);items.splice(to,0,item);
+  if(drag.scope==="run")reconcileSelectedRun(`“${task.title}”의 ${drag.kind==="subtask"?"Subtask":"체크리스트"} 순서를 변경했습니다.`);
+  commit();
+ } catch(error){toast(error.message,"error");}
+});
+root.addEventListener("dragend",()=>{itemDrag=null;root.querySelectorAll(".item-drop-target,.item-dragging").forEach(x=>x.classList.remove("item-drop-target","item-dragging"));});
 function commit(){repo.save(state);render()}function toast(msg,kind="info"){const e=document.querySelector("#toast");e.textContent=msg;e.className=`toast show ${kind}`;setTimeout(()=>e.className="toast",2500)}
 root.addEventListener("click",e=>{const t=e.target.closest("[data-action]");if(!t)return;const a=t.dataset.action;try{
  if(a==="modal-panel")return
