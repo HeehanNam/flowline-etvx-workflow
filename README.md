@@ -4,6 +4,12 @@ ETVX 기준으로 프로젝트 Workflow를 정의하고 실행 상태를 관리�
 
 ## 실행
 
+### 보안 정책으로 삭제된 파일 복구
+
+`restore_missing_files.bat`를 더블클릭하거나 `python restore_missing_files.py`를 실행합니다. Git과 Python이 필요합니다. GitHub 이력을 fetch한 뒤 현재 로컬 커밋(HEAD)에 있는 파일 중 누락된 파일만 복원합니다. 기존 파일의 수정 내용, Git 인덱스, DB는 변경하지 않으며 pull/merge는 수행하지 않습니다. 네트워크 또는 인증 오류로 fetch가 실패해도 로컬 커밋에서 복구를 시도하고 오류를 안내합니다. 의도적으로 삭제한 추적 파일도 복원되므로 필요할 때만 실행하세요. 최신 버전으로 업데이트하는 기능과는 다릅니다.
+
+Windows 작업 스케줄러에서 매일 실행하려면 프로그램에 `python.exe`의 전체 경로를, 인수에 이 프로젝트의 `restore_missing_files.py` 전체 경로를 지정하세요. 자동 실행에는 일시정지하는 bat 대신 py를 사용하세요. 보안 정책 자체를 우회하거나 파일 삭제를 방지하지는 않습니다.
+
 ```powershell
 python -m pip install -r requirements.txt
 python app.py
